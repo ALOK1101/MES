@@ -44,7 +44,7 @@ struct Jakobian {
     void printJacobian(const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) const {
         cout << fixed << setprecision(9);
 
-        cout << "        d N1/d Xi      d N2/d Xi      d N3/d Xi      d N4/d Xi" << endl;
+        cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
         for (int i = 0; i < 4; ++i) {
             cout << "pc" << i + 1 << "  ";
             for (int j = 0; j < 4; ++j) {
@@ -69,18 +69,7 @@ struct Jakobian {
             cout << "detJ= " << this->detJ << endl;
        
     }
-    void computeH(const vector<Node>& elementNodes, const long double dN_dEta[4][4], const long double dN_dKsi[4][4], double conductivity) {
-        for (int i = 0; i < 4; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                double dN_dX_i = (1 / detJ) * (J[1][1] * dN_dEta[i][j] - J[0][1] * dN_dKsi[i][j]);
-                double dN_dY_i = (1 / detJ) * (-J[1][0] * dN_dEta[i][j] + J[0][0] * dN_dKsi[i][j]);
-                double dN_dX_j = (1 / detJ) * (J[1][1] * dN_dEta[j][j] - J[0][1] * dN_dKsi[j][j]);
-                double dN_dY_j = (1 / detJ) * (-J[1][0] * dN_dEta[j][j] + J[0][0] * dN_dKsi[j][j]);
-
-                H[i][j] += conductivity * (dN_dX_i * dN_dX_j + dN_dY_i * dN_dY_j) * detJ;
-            }
-        }
-    }
+    
 };
 struct Element {
     int ID[4];
@@ -160,30 +149,7 @@ struct ElemUniv {
             dN_dKsi[i][3] = 0.25 * (1.0 - ksi);
         }
     }
-    void computeHMatrix(const vector<Node>& elementNodes, Jakobian& jacobian, double conductivity, vector<vector<long double>>& H) {
-        
-        H.resize(4, vector<long double>(4, 0.0));
-
-        
-        for (int i = 0; i < npc; ++i) {
-            
-            jacobian.computeJacobian(elementNodes, dN_dEtaa[i], dN_dKsi[i]);
-
-            
-            vector<long double> dN_dx(4), dN_dy(4);
-            for (int j = 0; j < 4; ++j) {
-                dN_dx[j] = jacobian.J1[0][0] * dN_dEta[i][j] + jacobian.J1[0][1] * dN_dKsi[i][j];
-                dN_dy[j] = jacobian.J1[1][0] * dN_dEta[i][j] + jacobian.J1[1][1] * dN_dKsi[i][j];
-            }
-
-            
-            for (int a = 0; a < 4; ++a) {
-                for (int b = 0; b < 4; ++b) {
-                    H[a][b] += conductivity * (dN_dx[a] * dN_dx[b] + dN_dy[a] * dN_dy[b]) * jacobian.detJ * weights[i];
-                }
-            }
-        }
-    }
+    
 
 };
 void printMatrix(const vector<vector<long double>>& matrix) {
@@ -460,15 +426,6 @@ int main()
     elemUniv.computeShapeFunctionDerivatives();
 
     
-    double conductivity = 30.0; // example conductivity value
-    vector<vector<long double>> H;
-
-    // Compute H matrix
-    elemUniv.computeHMatrix(nodes1, jacobian, conductivity, H);
-
-    // Print matrix H
-    cout << "Matrix H:" << endl;
-    printMatrix(H);
-
+    
     return 0;
 }
