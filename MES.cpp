@@ -13,63 +13,182 @@ struct Node {
     Node() : x(0.0), y(0.0), BC(false) {}  // Default constructor
 };
 
+//struct Jakobian {
+//    double J[2][2];
+//    double J1[2][2];
+//    double detJ;
+//    vector<vector<double>> H;
+//
+//    Jakobian() {
+//        for (int i = 0; i < 2; i++) {
+//            detJ = 0.0;
+//            for (int j = 0; j < 4; j++) {
+//                J[i][j] = 0.0;
+//                J1[i][j] = 0.0;
+//            }
+//        }
+//    }
+//    void computeJacobian(const vector<Node>& elementNodes, const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) {
+//        // Reset Jacobian matrix
+//        J[0][0] = J[0][1] = J[1][0] = J[1][1] = 0.0;
+//
+//        for (int i = 0; i < 4; ++i) {
+//            J[0][0] += dN_dEta[0][i] * elementNodes[i].x;  
+//            J[0][1] += dN_dEta[0][i] * elementNodes[i].y;
+//            J[1][0] += dN_dKsi[0][i] * elementNodes[i].x;
+//            J[1][1] += dN_dKsi[0][i] * elementNodes[i].y;
+//        }
+//
+//        detJ = J[0][0] * J[1][1] - J[0][1] * J[1][0];
+//    }
+//    void printJacobian(const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) const {
+//        cout << fixed << setprecision(9);
+//
+//        cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
+//        for (int i = 0; i < 4; ++i) {
+//            cout << "pc" << i + 1 << "  ";
+//            for (int j = 0; j < 4; ++j) {
+//                cout << setw(12) << dN_dEta[i][j] << " ";
+//            }
+//            cout << endl;
+//        }
+//
+//        cout << "\n        d N1/d Eta     d N2/d Eta     d N3/d Eta     d N4/d Eta" << endl;
+//        for (int i = 0; i < 4; ++i) {
+//            cout << "pc" << i + 1 << "  ";
+//            for (int j = 0; j < 4; ++j) {
+//                cout << setw(12) << dN_dKsi[i][j] << " ";
+//            }
+//            cout << endl;
+//        }
+//
+//        
+//            cout << "\nJacobian:"<< endl;
+//            cout << "[ " << setw(12) << this->J[0][0] << " " << setw(12) << this->J[0][1] << " ]" << endl;
+//            cout << "[ " << setw(12) << this->J[1][0] << " " << setw(12) << this->J[1][1] << " ]" << endl;
+//            cout << "detJ= " << this->detJ << endl;
+//       
+//    }
+//    
+//};
 struct Jakobian {
     double J[2][2];
-    double J1[2][2];
+    double J1[2][2]; // Odwrotność macierzy Jacobiana
     double detJ;
     vector<vector<double>> H;
 
-    Jakobian() {
-        for (int i = 0; i < 2; i++) {
-            detJ = 0.0;
-            for (int j = 0; j < 4; j++) {
+    Jakobian() : detJ(0.0) {
+        for (int i = 0; i < 2; ++i) {
+            for (int j = 0; j < 2; ++j) {
                 J[i][j] = 0.0;
                 J1[i][j] = 0.0;
             }
         }
+        H.resize(4, vector<double>(4, 0.0)); // Inicjalizacja macierzy H
     }
+
     void computeJacobian(const vector<Node>& elementNodes, const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) {
-        // Reset Jacobian matrix
+        // Resetowanie Jacobiana
         J[0][0] = J[0][1] = J[1][0] = J[1][1] = 0.0;
 
         for (int i = 0; i < 4; ++i) {
-            J[0][0] += dN_dEta[0][i] * elementNodes[i].x;  
+            J[0][0] += dN_dEta[0][i] * elementNodes[i].x;
             J[0][1] += dN_dEta[0][i] * elementNodes[i].y;
             J[1][0] += dN_dKsi[0][i] * elementNodes[i].x;
             J[1][1] += dN_dKsi[0][i] * elementNodes[i].y;
         }
 
         detJ = J[0][0] * J[1][1] - J[0][1] * J[1][0];
+
+        // Obliczanie odwrotności Jacobiana
+        if (detJ != 0) {
+            J1[0][0] = J[1][1] / detJ;
+            J1[0][1] = -J[0][1] / detJ;
+            J1[1][0] = -J[1][0] / detJ;
+            J1[1][1] = J[0][0] / detJ;
+        }
+    }
+
+    void computeDerivativesDxDy(const long double dN_dEta[4][4], const long double dN_dKsi[4][4], vector<vector<double>>& dN_dx, vector<vector<double>>& dN_dy) {
+    dN_dx.resize(4, vector<double>(4, 0.0));
+    dN_dy.resize(4, vector<double>(4, 0.0));
+
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            dN_dx[i][j] = J1[0][0] * dN_dEta[i][j] + J1[0][1] * dN_dKsi[i][j];
+            dN_dy[i][j] = J1[1][0] * dN_dEta[i][j] + J1[1][1] * dN_dKsi[i][j];
+        }
+    }
+}
+
+
+    void computeHMatrix(const vector<vector<double>>& dN_dx, const vector<vector<double>>& dN_dy, double conductivity) {
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                H[i][j] = (dN_dx[0][i] * dN_dx[0][j] + dN_dy[0][i] * dN_dy[0][j]) * conductivity * detJ;
+            }
+        }
     }
     void printJacobian(const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) const {
-        cout << fixed << setprecision(9);
-
-        cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
-        for (int i = 0; i < 4; ++i) {
-            cout << "pc" << i + 1 << "  ";
-            for (int j = 0; j < 4; ++j) {
-                cout << setw(12) << dN_dEta[i][j] << " ";
-            }
-            cout << endl;
-        }
-
-        cout << "\n        d N1/d Eta     d N2/d Eta     d N3/d Eta     d N4/d Eta" << endl;
-        for (int i = 0; i < 4; ++i) {
-            cout << "pc" << i + 1 << "  ";
-            for (int j = 0; j < 4; ++j) {
-                cout << setw(12) << dN_dKsi[i][j] << " ";
-            }
-            cout << endl;
-        }
-
+                cout << fixed << setprecision(9);
         
-            cout << "\nJacobian:"<< endl;
-            cout << "[ " << setw(12) << this->J[0][0] << " " << setw(12) << this->J[0][1] << " ]" << endl;
-            cout << "[ " << setw(12) << this->J[1][0] << " " << setw(12) << this->J[1][1] << " ]" << endl;
-            cout << "detJ= " << this->detJ << endl;
-       
+                cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
+                for (int i = 0; i < 4; ++i) {
+                    cout << "pc" << i + 1 << "  ";
+                    for (int j = 0; j < 4; ++j) {
+                        cout << setw(12) << dN_dEta[i][j] << " ";
+                    }
+                    cout << endl;
+                }
+        
+                cout << "\n        d N1/d Eta     d N2/d Eta     d N3/d Eta     d N4/d Eta" << endl;
+                for (int i = 0; i < 4; ++i) {
+                    cout << "pc" << i + 1 << "  ";
+                    for (int j = 0; j < 4; ++j) {
+                        cout << setw(12) << dN_dKsi[i][j] << " ";
+                    }
+                    cout << endl;
+                }
+        
+                
+                    cout << "\nJacobian:"<< endl;
+                    cout << "[ " << setw(12) << this->J[0][0] << " " << setw(12) << this->J[0][1] << " ]" << endl;
+                    cout << "[ " << setw(12) << this->J[1][0] << " " << setw(12) << this->J[1][1] << " ]" << endl;
+                    cout << "detJ= " << this->detJ << endl;
+               
+            }
+    void printDxDy(const vector<vector<double>>& dN_dx, const vector<vector<double>>& dN_dy) const {
+        
+                    cout << fixed << setprecision(9);
+            
+                    cout << "        d N1/d x      d N2/d x      d N3/d x      d N4/d x" << endl;
+                    for (int i = 0; i < 4; ++i) {
+                        cout << "pc" << i + 1 << "  ";
+                        for (int j = 0; j < 4; ++j) {
+                            cout << setw(12) << dN_dx[i][j] << " ";
+                        }
+                        cout << endl;
+                    }
+            
+                    cout << "\n        d N1/d y     d N2/d y     d N3/d y     d N4/d y" << endl;
+                    for (int i = 0; i < 4; ++i) {
+                        cout << "pc" << i + 1 << "  ";
+                        for (int j = 0; j < 4; ++j) {
+                            cout << setw(12) << dN_dy[i][j] << " ";
+                        }
+                        cout << endl;
+                    } 
     }
-    
+
+    void printHMatrix() const {
+        cout << "\nMatrix H for each integration point:" << endl;
+        for (const auto& row : H) {
+            for (const auto& val : row) {
+                cout << setw(12) << val << " ";
+            }
+            cout << endl;
+        }
+    }
 };
 struct Element {
     int ID[4];
@@ -421,7 +540,17 @@ int main()
     jacobian.computeJacobian(nodes1, elemUniv.dN_dEta, elemUniv.dN_dKsi);
     cout << "Element " << "1" << ":\n";
     jacobian.printJacobian(elemUniv.dN_dEta, elemUniv.dN_dKsi);
+    jacobian.computeJacobian(nodes1, elemUniv.dN_dEta, elemUniv.dN_dKsi);
+    cout << "Element " << "1:\n";
+    jacobian.printJacobian(elemUniv.dN_dEta, elemUniv.dN_dKsi);
 
+    vector<vector<double>> dN_dx, dN_dy;
+    jacobian.computeDerivativesDxDy(elemUniv.dN_dEta, elemUniv.dN_dKsi, dN_dx, dN_dy);
+    jacobian.printDxDy(dN_dx, dN_dy);
+
+    double conductivity = 30;
+    jacobian.computeHMatrix(dN_dx, dN_dy, conductivity);
+    jacobian.printHMatrix();
         
     elemUniv.computeShapeFunctionDerivatives();
 
