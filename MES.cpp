@@ -5,7 +5,68 @@
 #include<vector>
 #include <iomanip>      
 using namespace std;
+struct GaussPoint {
+    long double ksi;
+    long double weight;
+};
 
+vector<GaussPoint> gaussPoints1D(int numPoints) {
+    vector<GaussPoint> points;
+
+    if (numPoints == 1) {
+        points.push_back({ 0.0, 2.0 });
+    }
+    else if (numPoints == 2) {
+        points.push_back({ -1.0 / sqrt(3.0), 1.0 });
+        points.push_back({ 1.0 / sqrt(3.0), 1.0 });
+    }
+    else if (numPoints == 3) {
+        points.push_back({ -sqrt(3.0 / 5.0), 5.0 / 9.0 });
+        points.push_back({ 0.0, 8.0 / 9.0 });
+        points.push_back({ sqrt(3.0 / 5.0), 5.0 / 9.0 });
+    }
+    return points;
+}
+
+long double gaussIntegration1D(double (*f)(long double), int numPoints) {
+    vector<GaussPoint> points = gaussPoints1D(numPoints);
+    long double result = 0.0;
+
+    for (const GaussPoint& p : points) {
+        result += p.weight * f(p.ksi);
+    }
+    return result;
+}
+
+vector<pair<GaussPoint, GaussPoint>> gaussPoints2D(int numPoints) {
+    vector<GaussPoint> points1D = gaussPoints1D(numPoints);
+    vector<pair<GaussPoint, GaussPoint>> points2D;
+
+    for (const GaussPoint& p1 : points1D) {
+        for (const GaussPoint& p2 : points1D) {
+            points2D.push_back({ p1, p2 });
+        }
+    }
+    return points2D;
+}
+
+long double gaussIntegration2D(double (*f)(long double, long double), int numPoints) {
+    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(numPoints);
+    long double result = 0.0;
+
+    for (const auto& p : points) {
+        result += p.first.weight * p.second.weight * f(p.first.ksi, p.second.ksi);
+    }
+    return result;
+}
+
+double func1D(long double x) {
+    return 5 * x * x + 3 * x + 6;
+}
+
+double func2D(long double x, long double y) {
+    return 5 * x * x * y * y + 3 * x * y + 6;
+}
 struct Node {
     long double x, y;
     bool BC;
@@ -87,7 +148,7 @@ struct Jakobian {
         H.resize(4, vector<double>(4, 0.0)); // Inicjalizacja macierzy H
     }
 
-    void computeJacobian(const vector<Node>& elementNodes, const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) {
+    void computeJacobian(const vector<Node>& elementNodes, vector<vector<long double>>& dN_dEta, vector<vector<long double>>& dN_dKsi) {
         // Resetowanie Jacobiana
         J[0][0] = J[0][1] = J[1][0] = J[1][1] = 0.0;
 
@@ -109,7 +170,7 @@ struct Jakobian {
         }
     }
 
-    void computeDerivativesDxDy(const long double dN_dEta[4][4], const long double dN_dKsi[4][4], vector<vector<double>>& dN_dx, vector<vector<double>>& dN_dy) {
+    void computeDerivativesDxDy(vector<vector<long double>>& dN_dEta, vector<vector<long double>>& dN_dKsi, vector<vector<double>>& dN_dx, vector<vector<double>>& dN_dy) {
     dN_dx.resize(4, vector<double>(4, 0.0));
     dN_dy.resize(4, vector<double>(4, 0.0));
 
@@ -122,14 +183,31 @@ struct Jakobian {
 }
 
 
-    void computeHMatrix(const vector<vector<double>>& dN_dx, const vector<vector<double>>& dN_dy, double conductivity) {
-        for (int i = 0; i < 4; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                H[i][j] = (dN_dx[0][i] * dN_dx[0][j] + dN_dy[0][i] * dN_dy[0][j]) * conductivity * detJ;
+    void computeHMatrix(const vector<vector<double>>& dN_dx, const vector<vector<double>>& dN_dy, double conductivity, vector<GaussPoint> points) {
+        
+        for (int i = 0; i < 4;i++) {
+            std::vector<std::vector<double>> H_i(4, std::vector<double>(4, 0.0));
+            for (int m = 0; m < 4; m++) {
+                for (int n = 0; n < 4; n++) {
+                    H_i[m][n] = detJ * conductivity * (dN_dx[i][m] * dN_dx[i][n] + dN_dy[i][m] * dN_dy[i][n]);
+                }
+            }
+            for (int m = 0; m < 4; m++) {
+                for (int n = 0; n < 4; n++) {
+                    cout << H_i[m][n] << " ";
+                }
+                cout << endl;
+            }
+            cout << endl;
+            for (int m = 0; m < 4; m++) {
+                for (int n = 0; n < 4; n++) {
+                    H[m][n] += H_i[m][n] * points[0].weight* points[1].weight;
+                }
             }
         }
+
     }
-    void printJacobian(const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) const {
+    void printJacobian(vector<vector<long double>>& dN_dEta, vector<vector<long double>>& dN_dKsi) const {
                 cout << fixed << setprecision(9);
         
                 cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
@@ -191,11 +269,14 @@ struct Jakobian {
     }
 };
 struct Element {
+    int npc;
     int ID[4];
-    Jakobian jakobian;
+    Jakobian* jakobian;
 
-    Element() {
+    Element(int elementsnumber) {
         for (int i = 0; i < 4; ++i) ID[i] = 0;
+        this->npc = elementsnumber;
+        jakobian  = new Jakobian[npc];
     }
 };
 
@@ -236,18 +317,16 @@ struct Grid {
 
 struct ElemUniv {
     int npc;
-    long double dN_dEta[4][4];
-    long double dN_dKsi[4][4];
-    vector<double> N_i;
+    std::vector<std::vector<long double>> dN_dEta;
+    std::vector<std::vector<long double>> dN_dKsi;
+    std::vector<double> N_i;
 
-    ElemUniv(int numPoints) : npc(numPoints), N_i(4, 0.0) {
-        for (int i = 0; i < npc; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                dN_dEta[i][j] = 0.0;
-                dN_dKsi[i][j] = 0.0;
-            }
-        }
-    }
+    ElemUniv(int numPoints)
+        : npc(numPoints),
+        dN_dEta(numPoints, std::vector<long double>(4, 0.0)),
+        dN_dKsi(numPoints, std::vector<long double>(4, 0.0)),
+        N_i(4, 0.0)
+    {}
 
     void computeShapeFunctionDerivatives() {
         const long double ksi_values[4] = { -1.0 / sqrt(3.0), 1.0 / sqrt(3.0), 1.0 / sqrt(3.0), -1.0 / sqrt(3.0) };
@@ -268,8 +347,6 @@ struct ElemUniv {
             dN_dKsi[i][3] = 0.25 * (1.0 - ksi);
         }
     }
-    
-
 };
 void printMatrix(const vector<vector<long double>>& matrix) {
     for (const auto& row : matrix) {
@@ -438,68 +515,7 @@ void readFile(string fileName, globalData& globalData, Grid** grid) {
 
     }
 }
-struct GaussPoint {
-    long double ksi;
-    long double weight;
-};
 
-vector<GaussPoint> gaussPoints1D(int numPoints) {
-    vector<GaussPoint> points;
-
-    if (numPoints == 1) {
-        points.push_back({ 0.0, 2.0 });  
-    }
-    else if (numPoints == 2) {
-        points.push_back({ -1.0 / sqrt(3.0), 1.0 }); 
-        points.push_back({ 1.0 / sqrt(3.0), 1.0 });
-    }
-    else if (numPoints == 3) {
-        points.push_back({ -sqrt(3.0 / 5.0), 5.0 / 9.0 }); 
-        points.push_back({ 0.0, 8.0 / 9.0 });
-        points.push_back({ sqrt(3.0 / 5.0), 5.0 / 9.0 });
-    }
-    return points;
-}
-
-long double gaussIntegration1D(double (*f)(long double), int numPoints) {
-    vector<GaussPoint> points = gaussPoints1D(numPoints);
-    long double result = 0.0;
-
-    for (const GaussPoint& p : points) {
-        result += p.weight * f(p.ksi);  
-    }
-    return result;
-}
-
-vector<pair<GaussPoint, GaussPoint>> gaussPoints2D(int numPoints) {
-    vector<GaussPoint> points1D = gaussPoints1D(numPoints);
-    vector<pair<GaussPoint, GaussPoint>> points2D;
-
-    for (const GaussPoint& p1 : points1D) {
-        for (const GaussPoint& p2 : points1D) {
-            points2D.push_back({ p1, p2 });
-        }
-    }
-    return points2D;
-}
-
-long double gaussIntegration2D(double (*f)(long double, long double), int numPoints) {
-    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(numPoints);
-    long double result = 0.0;
-
-    for (const auto& p : points) {
-        result += p.first.weight * p.second.weight * f(p.first.ksi, p.second.ksi); 
-    }
-    return result;
-}
-
-double func1D(long double x) {
-    return 5*x*x+3*x+6;  
-}
-
-double func2D(long double x, long double y) {
-    return 5*x*x*y*y+3*x*y+6;  
-}
 int main()
 {
     globalData globalData;
@@ -536,7 +552,8 @@ int main()
     nodes1[2].y = 0.025;
     nodes1[3].x = 0.0;
     nodes1[3].y = 0.025;
-    Jakobian jacobian;
+    vector<GaussPoint> points = gaussPoints1D(2);
+    Element element();
     jacobian.computeJacobian(nodes1, elemUniv.dN_dEta, elemUniv.dN_dKsi);
     cout << "Element " << "1" << ":\n";
     jacobian.printJacobian(elemUniv.dN_dEta, elemUniv.dN_dKsi);
@@ -547,9 +564,9 @@ int main()
     vector<vector<double>> dN_dx, dN_dy;
     jacobian.computeDerivativesDxDy(elemUniv.dN_dEta, elemUniv.dN_dKsi, dN_dx, dN_dy);
     jacobian.printDxDy(dN_dx, dN_dy);
-
+    std::cout << points[0].weight << " " << points[1].weight<<endl;
     double conductivity = 30;
-    jacobian.computeHMatrix(dN_dx, dN_dy, conductivity);
+    jacobian.computeHMatrix(dN_dx, dN_dy, conductivity,points);
     jacobian.printHMatrix();
         
     elemUniv.computeShapeFunctionDerivatives();
