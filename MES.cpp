@@ -76,9 +76,8 @@ struct GaussPoint {
 //};
 struct Jakobian {
     double J[2][2];
-    double J1[2][2]; // Odwrotność macierzy Jacobiana
+    double J1[2][2];
     double detJ;
-    vector<vector<double>> H;
 
     Jakobian() : detJ(0.0) {
         for (int i = 0; i < 2; ++i) {
@@ -87,23 +86,20 @@ struct Jakobian {
                 J1[i][j] = 0.0;
             }
         }
-        H.resize(4, vector<double>(4, 0.0)); // Inicjalizacja macierzy H
     }
 
-    void computeJacobian(const vector<Node>& elementNodes, vector<vector<long double>>& dN_dEta, vector<vector<long double>>& dN_dKsi) {
-        // Resetowanie Jacobiana
+    void computeJacobian(const vector<Node>& elementNodes, const vector<long double>& dN_dEta, const vector<long double>& dN_dKsi) {
         J[0][0] = J[0][1] = J[1][0] = J[1][1] = 0.0;
 
         for (int i = 0; i < 4; ++i) {
-            J[0][0] += dN_dEta[0][i] * elementNodes[i].x;
-            J[0][1] += dN_dEta[0][i] * elementNodes[i].y;
-            J[1][0] += dN_dKsi[0][i] * elementNodes[i].x;
-            J[1][1] += dN_dKsi[0][i] * elementNodes[i].y;
+            J[0][0] += dN_dEta[i] * elementNodes[i].x;
+            J[0][1] += dN_dEta[i] * elementNodes[i].y;
+            J[1][0] += dN_dKsi[i] * elementNodes[i].x;
+            J[1][1] += dN_dKsi[i] * elementNodes[i].y;
         }
 
         detJ = J[0][0] * J[1][1] - J[0][1] * J[1][0];
 
-        // Obliczanie odwrotności Jacobiana
         if (detJ != 0) {
             J1[0][0] = J[1][1] / detJ;
             J1[0][1] = -J[0][1] / detJ;
@@ -112,98 +108,19 @@ struct Jakobian {
         }
     }
 
-    void computeDerivativesDxDy(int npc, vector<vector<long double>>& dN_dEta, vector<vector<long double>>& dN_dKsi, vector<vector<double>>& dN_dx, vector<vector<double>>& dN_dy) {
-    dN_dx.resize(npc, vector<double>(4, 0.0));
-    dN_dy.resize(npc, vector<double>(4, 0.0));
-
-    for (int i = 0; i < npc; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            dN_dx[i][j] = J1[0][0] * dN_dEta[i][j] + J1[0][1] * dN_dKsi[i][j];
-            dN_dy[i][j] = J1[1][0] * dN_dEta[i][j] + J1[1][1] * dN_dKsi[i][j];
-        }
-    }
-}
-
-
-    void computeHMatrix(int npc, const vector<vector<double>>& dN_dx, const vector<vector<double>>& dN_dy, double conductivity, vector<pair<GaussPoint, GaussPoint>> points) {
-
-        for (int i = 0; i < npc; i++) {
-            std::vector<std::vector<double>> H_i(4, std::vector<double>(4, 0.0));
-            for (int m = 0; m < 4; m++) {
-                for (int n = 0; n < 4; n++) {
-                    H_i[m][n] = detJ * conductivity * (dN_dx[i][m] * dN_dx[i][n] + dN_dy[i][m] * dN_dy[i][n]);
-                }
-            }
-            for (int m = 0; m < 4; m++) {
-                for (int n = 0; n < 4; n++) {
-                    cout << H_i[m][n] << " ";
-                }
-                cout << endl;
-            }
-            cout << endl; 
-           // if (npc == 4) {
-                for (int m = 0; m < 4; m++) {
-                    for (int n = 0; n < 4; n++) {
-                        H[m][n] += H_i[m][n] * points[i].first.weight * points[i].second.weight;;
-                    }
-                }
-            //}
-           /* else if (npc == 9) {
-                for (int m = 0; m < 4; m++) {
-                    for (int n = 0; n < 4; n++) {
-                        H[m][n] += H_i[m][n] * points[0].weight * points[1].weight;;
-                    }
-                }
-
-            }*/
-            
-        }
-
-    }
     void printJacobian() const {
-                cout << fixed << setprecision(9);
-        
-                
-        
-                
-                    cout << "\nJacobian:"<< endl;
-                    cout << "[ " << setw(12) << this->J[0][0] << " " << setw(12) << this->J[0][1] << " ]" << endl;
-                    cout << "[ " << setw(12) << this->J[1][0] << " " << setw(12) << this->J[1][1] << " ]" << endl;
-                    cout << "detJ= " << this->detJ << endl;
-               
-            }
-    void printDxDy(const vector<vector<double>>& dN_dx, const vector<vector<double>>& dN_dy, int npc) const {
-        
-                    cout << fixed << setprecision(9);
-            
-                    cout << "        d N1/d x      d N2/d x      d N3/d x      d N4/d x" << endl;
-                    for (int i = 0; i < npc; ++i) {
-                        cout << "pc" << i + 1 << "  ";
-                        for (int j = 0; j < 4; ++j) {
-                            cout << setw(12) << dN_dx[i][j] << " ";
-                        }
-                        cout << endl;
-                    }
-            
-                    cout << "\n        d N1/d y     d N2/d y     d N3/d y     d N4/d y" << endl;
-                    for (int i = 0; i < npc; ++i) {
-                        cout << "pc" << i + 1 << "  ";
-                        for (int j = 0; j < 4; ++j) {
-                            cout << setw(12) << dN_dy[i][j] << " ";
-                        }
-                        cout << endl;
-                    } 
+        cout << fixed << setprecision(9);
+        cout << "\nJacobian:" << endl;
+        cout << "[ " << setw(12) << J[0][0] << " " << setw(12) << J[0][1] << " ]" << endl;
+        cout << "[ " << setw(12) << J[1][0] << " " << setw(12) << J[1][1] << " ]" << endl;
+        cout << "detJ= " << detJ << endl;
     }
-
-    void printHMatrix() const {
-        cout << "\nMatrix H for each integration point:" << endl;
-        for (const auto& row : H) {
-            for (const auto& val : row) {
-                cout << setw(12) << val << " ";
-            }
-            cout << endl;
-        }
-    }
+};
+struct IntegrationPointResults {
+    Jakobian jakobian;
+    vector<double> dN_dx;
+    vector<double> dN_dy;
+    vector<vector<double>> H_point;
 };
 struct Element {
     int ID[4];
@@ -556,6 +473,127 @@ double func1D(long double x) {
 double func2D(long double x, long double y) {
     return 5*x*x*y*y+3*x*y+6;  
 }
+
+void computeDerivativesDxDy(const Jakobian& jakobian,
+    const vector<long double>& dN_dEta,
+    const vector<long double>& dN_dKsi,
+    vector<double>& dN_dx,
+    vector<double>& dN_dy) {
+    dN_dx.resize(4, 0.0);
+    dN_dy.resize(4, 0.0);
+
+    for (int i = 0; i < 4; ++i) {
+        dN_dx[i] = jakobian.J1[0][0] * dN_dEta[i] + jakobian.J1[0][1] * dN_dKsi[i];
+        dN_dy[i] = jakobian.J1[1][0] * dN_dEta[i] + jakobian.J1[1][1] * dN_dKsi[i];
+    }
+}
+
+// Funkcja do obliczania macierzy H dla pojedynczego punktu całkowania
+vector<IntegrationPointResults> computeIntegrationPointsResults(
+    const vector<Node>& elementNodes,
+    const ElemUniv& elemUniv,
+    double conductivity,
+    const vector<pair<GaussPoint, GaussPoint>>& points) {
+
+    vector<IntegrationPointResults> results(elemUniv.npc);
+
+    // Dla każdego punktu całkowania
+    for (int i = 0; i < elemUniv.npc; i++) {
+        // Oblicz Jakobian
+        results[i].jakobian.computeJacobian(elementNodes, elemUniv.dN_dEta[i], elemUniv.dN_dKsi[i]);
+
+        // Oblicz pochodne dN/dx i dN/dy
+        computeDerivativesDxDy(results[i].jakobian,
+            elemUniv.dN_dEta[i],
+            elemUniv.dN_dKsi[i],
+            results[i].dN_dx,
+            results[i].dN_dy);
+
+        // Oblicz macierz H dla punktu całkowania
+        results[i].H_point.resize(4, vector<double>(4, 0.0));
+        for (int m = 0; m < 4; m++) {
+            for (int n = 0; n < 4; n++) {
+                results[i].H_point[m][n] = results[i].jakobian.detJ * conductivity *
+                    (results[i].dN_dx[m] * results[i].dN_dx[n] +
+                        results[i].dN_dy[m] * results[i].dN_dy[n]);
+            }
+        }
+    }
+
+    return results;
+}
+
+// Funkcja do obliczania całkowitej macierzy H
+vector<vector<double>> computeFinalHMatrix(
+    const vector<IntegrationPointResults>& results,
+    const vector<pair<GaussPoint, GaussPoint>>& points) {
+
+    vector<vector<double>> H_final(4, vector<double>(4, 0.0));
+
+    for (int i = 0; i < results.size(); i++) {
+        for (int m = 0; m < 4; m++) {
+            for (int n = 0; n < 4; n++) {
+                H_final[m][n] += results[i].H_point[m][n] *
+                    points[i].first.weight *
+                    points[i].second.weight;
+            }
+        }
+    }
+
+    return H_final;
+}
+void printDerivatives(const vector<IntegrationPointResults>& results) {
+    cout << "\nPochodne dN/dx i dN/dy dla wszystkich punktow calkowania:" << endl;
+    cout << "\td N1/d x\td N2/d x\td N3/d x\td N4/d x" << endl;
+    for (int i = 0; i < results.size(); i++) {
+        cout << "Pc" << i + 1 << ":\t";
+
+        
+        for (const auto& val : results[i].dN_dx) {
+            cout << setw(12) << val << "\t";
+        }
+        cout << endl;
+
+        
+    }
+    cout <<endl<< "\td N1/d y\td N2/d y\td N3/d y\td N4/d y" << endl;
+
+    for (int i = 0; i < results.size(); i++) {
+        cout << "Pc" << i + 1 << ":\t";
+
+
+        for (const auto& val : results[i].dN_dy) {
+            cout << setw(12) << val << "\t";
+        }
+        cout << endl;
+
+
+    }
+}
+void printHMatrices(const vector<IntegrationPointResults>& results) {
+    cout << "\nMacierze H dla poszczególnych punktow calkowania:" << endl;
+    for (int i = 0; i < results.size(); i++) {
+        cout << "\nPc " << i + 1 << ":" << endl;
+        for (const auto& row : results[i].H_point) {
+            for (const auto& val : row) {
+                cout << setw(12) << val << " ";
+            }
+            cout << endl;
+        }
+    }
+}
+// Funkcja do wyświetlania macierzy H
+void printHMatrix(const vector<vector<double>>& H) {
+    cout << "\nMatrix H:" << endl;
+    for (const auto& row : H) {
+        for (const auto& val : row) {
+            cout << setw(12) << val << " ";
+        }
+        cout << endl;
+    }
+}
+
+
 int main()
 {
      globalData globalData;
@@ -579,12 +617,24 @@ int main()
     ElemUniv elemUniv(4);
     elemUniv.computeShapeFunctionDerivatives();
     elemUniv.printShapeFunctionDerivatives();
-    vector<Node> nodes1; 
+    
+    Grid* grid2 = new Grid; 
+    grid2->allocateMemory(4, 9);
+    grid2->nodes[0].x = 0.0;
+    grid2->nodes[0].y = 0.0;
+    grid2->nodes[1].x = 0.025;
+    grid2->nodes[1].y = 0.0;
+    grid2->nodes[2].x = 0.025;
+    grid2->nodes[2].y = 0.025;
+    grid2->nodes[3].x = 0.0;
+    grid2->nodes[3].y = 0.025;
+    vector<Node> nodes1;
     Node node;
     for (int i = 0; i < 4; i++)
     {
         nodes1.push_back(node);
     }
+    double conductivity = 30;
     nodes1[0].x = 0.01;
     nodes1[0].y = -0.01;
     nodes1[1].x = 0.025;
@@ -594,24 +644,61 @@ int main()
     nodes1[3].x = 0.0;
     nodes1[3].y = 0.025;
     vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(2);
-    Element element();
-    Jakobian jacobian;
-    jacobian.computeJacobian(nodes1, elemUniv.dN_dEta, elemUniv.dN_dKsi);
-    cout << "Element " << "1" << ":\n";
-    jacobian.printJacobian();
-    jacobian.computeJacobian(nodes1, elemUniv.dN_dEta, elemUniv.dN_dKsi);
-    cout << "Element " << "1:\n";
-    jacobian.printJacobian();
+    vector<IntegrationPointResults> results = computeIntegrationPointsResults(
+        nodes1, elemUniv, conductivity, points);
+    for (int i = 0; i < results.size(); i++) {
+        cout << "\nPunkt całkowania " << i + 1 << ":" << endl;
+        results[i].jakobian.printJacobian();
+    }
+    printDerivatives(results);
+    printHMatrices(results);
+    
+    vector<vector<double>> H_final = computeFinalHMatrix(results, points);
 
-    vector<vector<double>> dN_dx, dN_dy;
-    jacobian.computeDerivativesDxDy(elemUniv.npc, elemUniv.dN_dEta, elemUniv.dN_dKsi, dN_dx, dN_dy);
-    jacobian.printDxDy(dN_dx, dN_dy, elemUniv.npc);
-    double conductivity = 30;
-    jacobian.computeHMatrix(elemUniv.npc, dN_dx, dN_dy, conductivity, points);
-    jacobian.printHMatrix();
-        
-    elemUniv.computeShapeFunctionDerivatives();
+    cout << "\nKońcowa macierz H:" << endl;
+    for (const auto& row : H_final) {
+        for (const auto& val : row) {
+            cout << setw(12) << val << " ";
+        }
+        cout << endl;
+    }
+    cout << "\n\n=== OBLICZENIA DLA DANYCH Z PLIKU ===" << endl;
 
+    // Przygotowanie elementu uniwersalnego (2x2 punkty całkowania)
+    ElemUniv elemUnivGrid(4);
+    elemUnivGrid.computeShapeFunctionDerivatives();
+
+    // Punkty całkowania Gaussa
+    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(2);
+
+    // Iteracja po wszystkich elementach siatki
+    for (int elem = 0; elem < grid->ElementsNumber; elem++) {
+        cout << "\nElement " << elem + 1 << ":" << endl;
+
+        // Przygotowanie węzłów dla bieżącego elementu
+        vector<Node> elementNodes;
+        for (int i = 0; i < 4; i++) {
+            int nodeIndex = grid->elements[elem].ID[i] - 1; // -1 bo indeksowanie od 1
+            elementNodes.push_back(grid->nodes[nodeIndex]);
+        }
+
+        // Obliczenie wyników dla punktów całkowania
+        vector<IntegrationPointResults> elemResults = computeIntegrationPointsResults(
+            elementNodes, elemUnivGrid, globalData.Conductivity, gaussPoints);
+
+        // Obliczenie końcowej macierzy H dla elementu
+        vector<vector<double>> elem_H_final = computeFinalHMatrix(elemResults, gaussPoints);
+
+        cout << "\nMacierz H dla elementu " << elem + 1 << ":" << endl;
+        printHMatrix(elem_H_final);
+
+        // Można też wyświetlić Jakobiany i pochodne dla każdego punktu całkowania
+        for (int i = 0; i < elemResults.size(); i++) {
+            cout << "\nPunkt całkowania " << i + 1 << " dla elementu " << elem + 1 << ":" << endl;
+            elemResults[i].jakobian.printJacobian();
+        }
+        printDerivatives(elemResults);
+    }
     
     
     return 0;
