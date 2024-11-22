@@ -582,7 +582,7 @@ void printHMatrices(const vector<IntegrationPointResults>& results) {
         }
     }
 }
-// Funkcja do wyświetlania macierzy H
+
 void printHMatrix(const vector<vector<double>>& H) {
     cout << "\nMatrix H:" << endl;
     for (const auto& row : H) {
@@ -592,13 +592,73 @@ void printHMatrix(const vector<vector<double>>& H) {
         cout << endl;
     }
 }
+struct Solver {
+    vector<vector<double>> globalH;  // Macierz H globalna
+    int matrixSize;                  // Rozmiar macierzy (liczba węzłów)
 
+    Solver(int nodesNumber) : matrixSize(nodesNumber) {
+        // Inicjalizacja macierzy H globalnej zerami
+        globalH.resize(matrixSize, vector<double>(matrixSize, 0.0));
+    }
 
+    // Funkcja dodająca lokalną macierz H do globalnej
+    void aggregateLocalH(const vector<vector<double>>& localH, const vector<int>& nodes) {
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                int globalI = nodes[i] - 1;  // -1 bo indeksowanie od 1
+                int globalJ = nodes[j] - 1;
+                globalH[globalI][globalJ] += localH[i][j];
+            }
+        }
+    }
+
+    // Wyświetlanie macierzy H globalnej
+    void printGlobalH() const {
+        cout << "\nGlobalna macierz H:" << endl;
+        for (const auto& row : globalH) {
+            for (const auto& val : row) {
+                cout << setw(12) << val << " ";
+            }
+            cout << endl;
+        }
+    }
+};
+void aggregateSystem(Grid* grid, const globalData& data, Solver& solver) {
+    // Przygotowanie elementu uniwersalnego (2x2 punkty całkowania)
+    ElemUniv elemUniv(4);
+    elemUniv.computeShapeFunctionDerivatives();
+
+    // Punkty całkowania Gaussa
+    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(2);
+
+    // Iteracja po wszystkich elementach
+    for (int elem = 0; elem < grid->ElementsNumber; elem++) {
+        // Przygotowanie węzłów dla bieżącego elementu
+        vector<Node> elementNodes;
+        vector<int> nodeIndices;
+
+        for (int i = 0; i < 4; i++) {
+            int nodeIndex = grid->elements[elem].ID[i];
+            nodeIndices.push_back(nodeIndex);
+            elementNodes.push_back(grid->nodes[nodeIndex - 1]);  // -1 bo indeksowanie od 1
+        }
+
+        // Obliczenie wyników dla punktów całkowania
+        vector<IntegrationPointResults> elemResults = computeIntegrationPointsResults(
+            elementNodes, elemUniv, data.Conductivity, gaussPoints);
+
+        // Obliczenie lokalnej macierzy H
+        vector<vector<double>> localH = computeFinalHMatrix(elemResults, gaussPoints);
+
+        // Agregacja lokalnej macierzy H do globalnej
+        solver.aggregateLocalH(localH, nodeIndices);
+    }
+}
 int main()
 {
      globalData globalData;
     Grid* grid;
-    string fileName = "test1_4_4.txt";
+    string fileName = "test2_4_4.txt";
     readFile(fileName, globalData, &grid);
     int numPoints = 2;
     cout << fixed << setprecision(25);
@@ -618,16 +678,7 @@ int main()
     elemUniv.computeShapeFunctionDerivatives();
     elemUniv.printShapeFunctionDerivatives();
     
-    Grid* grid2 = new Grid; 
-    grid2->allocateMemory(4, 9);
-    grid2->nodes[0].x = 0.0;
-    grid2->nodes[0].y = 0.0;
-    grid2->nodes[1].x = 0.025;
-    grid2->nodes[1].y = 0.0;
-    grid2->nodes[2].x = 0.025;
-    grid2->nodes[2].y = 0.025;
-    grid2->nodes[3].x = 0.0;
-    grid2->nodes[3].y = 0.025;
+   
     vector<Node> nodes1;
     Node node;
     for (int i = 0; i < 4; i++)
@@ -664,42 +715,47 @@ int main()
     }
     cout << "\n\n=== OBLICZENIA DLA DANYCH Z PLIKU ===" << endl;
 
-    // Przygotowanie elementu uniwersalnego (2x2 punkty całkowania)
+    
     ElemUniv elemUnivGrid(4);
     elemUnivGrid.computeShapeFunctionDerivatives();
 
-    // Punkty całkowania Gaussa
+    
     vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(2);
 
-    // Iteracja po wszystkich elementach siatki
+    
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
         cout << "\nElement " << elem + 1 << ":" << endl;
 
-        // Przygotowanie węzłów dla bieżącego elementu
+       
         vector<Node> elementNodes;
         for (int i = 0; i < 4; i++) {
-            int nodeIndex = grid->elements[elem].ID[i] - 1; // -1 bo indeksowanie od 1
+            int nodeIndex = grid->elements[elem].ID[i] - 1; 
             elementNodes.push_back(grid->nodes[nodeIndex]);
         }
 
-        // Obliczenie wyników dla punktów całkowania
+        
         vector<IntegrationPointResults> elemResults = computeIntegrationPointsResults(
             elementNodes, elemUnivGrid, globalData.Conductivity, gaussPoints);
 
-        // Obliczenie końcowej macierzy H dla elementu
+        
         vector<vector<double>> elem_H_final = computeFinalHMatrix(elemResults, gaussPoints);
 
         cout << "\nMacierz H dla elementu " << elem + 1 << ":" << endl;
         printHMatrix(elem_H_final);
-
-        // Można też wyświetlić Jakobiany i pochodne dla każdego punktu całkowania
-        for (int i = 0; i < elemResults.size(); i++) {
+        
+        
+        /*for (int i = 0; i < elemResults.size(); i++) {
             cout << "\nPunkt całkowania " << i + 1 << " dla elementu " << elem + 1 << ":" << endl;
             elemResults[i].jakobian.printJacobian();
-        }
-        printDerivatives(elemResults);
+        }*/
+        /*printDerivatives(elemResults);*/
     }
-    
+    Solver solver(globalData.NodesNumber);
+    cout << "\n=== AGREGACJA MACIERZY H GLOBALNEJ ===" << endl;
+    aggregateSystem(grid, globalData, solver);
+
+    // Wyświetlenie globalnej macierzy H
+    solver.printGlobalH();
     
     return 0;
 }

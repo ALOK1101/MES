@@ -23,5 +23,8 @@
     <Text Include="Test1_4_4.txt">
       <Filter>Resource Files</Filter>
     </Text>
+    <Text Include="Test2_4_4.txt">
+      <Filter>Resource Files</Filter>
+    </Text>
   </ItemGroup>
 </Project>
