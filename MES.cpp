@@ -125,15 +125,17 @@ struct IntegrationPointResults {
 struct Element {
     int ID[4];
     Jakobian jakobian;
-    double Hbc[4][4];  // Added Hbc matrix for boundary condition heat transfer matrix
+    double Hbc[4][4];  // Existing boundary condition heat transfer matrix
+    vector<double> localP;  // New vector to store local P for each element
 
     Element() {
         for (int i = 0; i < 4; ++i) {
             ID[i] = 0;
             for (int j = 0; j < 4; ++j) {
-                Hbc[i][j] = 0.0;  // Initialize Hbc matrix to zero
+                Hbc[i][j] = 0.0;
             }
         }
+        localP.resize(4, 0.0);  // Initialize localP with 4 elements set to 0
     }
 };
 
@@ -643,6 +645,12 @@ struct Solver {
             cout << endl;
         }
     }
+    void printGlobalP() const {
+        cout << "\nGlobalny wektor P:" << endl;
+        for (const auto& val : globalP) {
+            cout << setprecision(1) << val << " ";
+        }
+    }
 };
 void aggregateLocalHToGlobalH(vector<vector<double>>& globalH, const vector<vector<double>>& localH, const vector<int>& nodes) {
     for (int i = 0; i < 4; i++) {
@@ -792,7 +800,101 @@ void aggregateHbc(Grid* grid, const GlobalData& data, Solver& solver) {
         }
     }
 }
+void calculateLocalPVector(Element& element, const Grid* grid, const GlobalData& globalData, int gaussPointsCount) {
+    // Reset local P vector
+    element.localP.assign(4, 0.0);
 
+    // Define surfaces for the element
+    Surface surfaces[4];
+
+    // Define surfaces based on element node IDs
+    // Surface points are in reference coordinates (ksi, eta)
+    // Surface 1 (bottom): y = -1
+    surfaces[0].npc = gaussPointsCount;
+    surfaces[0].nodeIds[0] = element.ID[0];
+    surfaces[0].nodeIds[1] = element.ID[1];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[0].pc[i][0] = gaussPoints4[i][0];  // ksi varies
+        surfaces[0].pc[i][1] = -1.0;                // eta is fixed at -1
+    }
+
+    // Surface 2 (right): x = 1
+    surfaces[1].npc = gaussPointsCount;
+    surfaces[1].nodeIds[0] = element.ID[1];
+    surfaces[1].nodeIds[1] = element.ID[2];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[1].pc[i][0] = 1.0;                 // ksi is fixed at 1
+        surfaces[1].pc[i][1] = gaussPoints4[i][0];  // eta varies
+    }
+
+    // Surface 3 (top): y = 1
+    surfaces[2].npc = gaussPointsCount;
+    surfaces[2].nodeIds[0] = element.ID[2];
+    surfaces[2].nodeIds[1] = element.ID[3];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[2].pc[i][0] = -gaussPoints4[i][0]; // ksi varies (inverted for top surface)
+        surfaces[2].pc[i][1] = 1.0;                 // eta is fixed at 1
+    }
+
+    // Surface 4 (left): x = -1
+    surfaces[3].npc = gaussPointsCount;
+    surfaces[3].nodeIds[0] = element.ID[3];
+    surfaces[3].nodeIds[1] = element.ID[0];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[3].pc[i][0] = -1.0;                // ksi is fixed at -1
+        surfaces[3].pc[i][1] = -gaussPoints4[i][0]; // eta varies (inverted for left surface)
+    }
+
+    // Process each surface
+    for (int surfaceIdx = 0; surfaceIdx < 4; ++surfaceIdx) {
+        Surface& surface = surfaces[surfaceIdx];
+
+        // Calculate Jacobian for surface integration
+        double x1 = grid->nodes[surface.nodeIds[0] - 1].x;
+        double y1 = grid->nodes[surface.nodeIds[0] - 1].y;
+        double x2 = grid->nodes[surface.nodeIds[1] - 1].x;
+        double y2 = grid->nodes[surface.nodeIds[1] - 1].y;
+        double detJ = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2)) / 2.0;
+
+        // Integrate P for this surface
+        for (int pc = 0; pc < surface.npc; ++pc) {
+            double ksi = surface.pc[pc][0];
+            double eta = surface.pc[pc][1];
+
+            // Calculate shape functions
+            double N1 = 0.25 * (1 - ksi) * (1 - eta);
+            double N2 = 0.25 * (1 + ksi) * (1 - eta);
+            double N3 = 0.25 * (1 + ksi) * (1 + eta);
+            double N4 = 0.25 * (1 - ksi) * (1 + eta);
+
+            // Shape function matrix
+            double N[4] = { N1, N2, N3, N4 };
+
+            // Compute local P contribution
+            for (int i = 0; i < 4; ++i) {
+                element.localP[i] += globalData.Alfa * globalData.Tot * N[i] * detJ *
+                    (pc < 2 ? 1.0 : 1.0); // Weight for 2 point Gauss quadrature
+            }
+        }
+    }
+    for (int i = 0; i < 4; i++) {
+        cout <<setprecision(1)<< element.localP[i] << " ";
+    }
+    cout << endl;
+}
+
+void aggregateLocalPToGlobalP(Grid* grid, Solver& solver, GlobalData globalData) {
+    for (int elem = 0; elem < grid->ElementsNumber; elem++) {
+        // Compute local P for each element
+        calculateLocalPVector(grid->elements[elem], grid, globalData, 2);
+
+        // Aggregate to global P
+        for (int i = 0; i < 4; i++) {
+            int globalI = grid->elements[elem].ID[i] - 1;
+            solver.globalP[globalI] += grid->elements[elem].localP[i];
+        }
+    }
+}
 
 
 
@@ -911,7 +1013,7 @@ int main()
             }
             cout << endl;
         }
-        cout << endl;
+       
     }
     cout << "\n=== AGREGACJA MACIERZY HBC ===" << endl;
     aggregateHbc(grid, globalData, solver);
@@ -919,6 +1021,10 @@ int main()
     // Print global Hbc
     solver.printGlobalHbc();
     solver.printGlobalHSum();
-    
+    cout << "\n=== OBLICZENIE I AGREGACJA WEKTORA P ===" << endl;
+    aggregateLocalPToGlobalP(grid, solver, globalData );
+
+    // Print global P vector
+    solver.printGlobalP();
     return 0;
 }
