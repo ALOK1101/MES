@@ -125,13 +125,19 @@ struct IntegrationPointResults {
 struct Element {
     int ID[4];
     Jakobian jakobian;
+    double Hbc[4][4];  // Added Hbc matrix for boundary condition heat transfer matrix
 
     Element() {
-        for (int i = 0; i < 4; ++i) ID[i] = 0;
+        for (int i = 0; i < 4; ++i) {
+            ID[i] = 0;
+            for (int j = 0; j < 4; ++j) {
+                Hbc[i][j] = 0.0;  // Initialize Hbc matrix to zero
+            }
+        }
     }
 };
 
-struct globalData
+struct GlobalData
 {
     int SimulationTime;
     int SimulationStepTime;
@@ -255,7 +261,7 @@ void printMatrix(const vector<vector<long double>>& matrix) {
         cout << endl;
     }
 }
-void readFile(string fileName, globalData& globalData, Grid** grid) {
+void readFile(string fileName, GlobalData& globalData, Grid** grid) {
     ifstream file;
     file.open(fileName);
     if (!file.is_open())
@@ -488,7 +494,7 @@ void computeDerivativesDxDy(const Jakobian& jakobian,
     }
 }
 
-// Funkcja do obliczania macierzy H dla pojedynczego punktu całkowania
+
 vector<IntegrationPointResults> computeIntegrationPointsResults(
     const vector<Node>& elementNodes,
     const ElemUniv& elemUniv,
@@ -497,19 +503,19 @@ vector<IntegrationPointResults> computeIntegrationPointsResults(
 
     vector<IntegrationPointResults> results(elemUniv.npc);
 
-    // Dla każdego punktu całkowania
+   
     for (int i = 0; i < elemUniv.npc; i++) {
-        // Oblicz Jakobian
+      
         results[i].jakobian.computeJacobian(elementNodes, elemUniv.dN_dEta[i], elemUniv.dN_dKsi[i]);
 
-        // Oblicz pochodne dN/dx i dN/dy
+        
         computeDerivativesDxDy(results[i].jakobian,
             elemUniv.dN_dEta[i],
             elemUniv.dN_dKsi[i],
             results[i].dN_dx,
             results[i].dN_dy);
 
-        // Oblicz macierz H dla punktu całkowania
+        
         results[i].H_point.resize(4, vector<double>(4, 0.0));
         for (int m = 0; m < 4; m++) {
             for (int n = 0; n < 4; n++) {
@@ -523,7 +529,7 @@ vector<IntegrationPointResults> computeIntegrationPointsResults(
     return results;
 }
 
-// Funkcja do obliczania całkowitej macierzy H
+
 vector<vector<double>> computeFinalHMatrix(
     const vector<IntegrationPointResults>& results,
     const vector<pair<GaussPoint, GaussPoint>>& points) {
@@ -592,27 +598,23 @@ void printHMatrix(const vector<vector<double>>& H) {
         cout << endl;
     }
 }
+struct Surface {
+    double pc[4][2]; // Gauss points coordinates 
+    int npc; // Number of integration points 
+    int nodeIds[2]; // Node IDs for this surface 
+};
 struct Solver {
-    vector<vector<double>> globalH;  // Macierz H globalna
-    int matrixSize;                  // Rozmiar macierzy (liczba węzłów)
+    vector<vector<double>> globalH;
+    vector<vector<double>> globalHbc; // New global Hbc vector
+    vector<double> globalP; // New global P
+    int matrixSize;
 
     Solver(int nodesNumber) : matrixSize(nodesNumber) {
-        // Inicjalizacja macierzy H globalnej zerami
         globalH.resize(matrixSize, vector<double>(matrixSize, 0.0));
+        globalHbc.resize(matrixSize, vector<double>(matrixSize, 0.0));
+        globalP.resize(matrixSize, 0.0);
     }
 
-    // Funkcja dodająca lokalną macierz H do globalnej
-    void aggregateLocalH(const vector<vector<double>>& localH, const vector<int>& nodes) {
-        for (int i = 0; i < 4; i++) {
-            for (int j = 0; j < 4; j++) {
-                int globalI = nodes[i] - 1;  // -1 bo indeksowanie od 1
-                int globalJ = nodes[j] - 1;
-                globalH[globalI][globalJ] += localH[i][j];
-            }
-        }
-    }
-
-    // Wyświetlanie macierzy H globalnej
     void printGlobalH() const {
         cout << "\nGlobalna macierz H:" << endl;
         for (const auto& row : globalH) {
@@ -622,41 +624,182 @@ struct Solver {
             cout << endl;
         }
     }
+
+    void printGlobalHbc() const {
+        cout << "\nGlobalna macierz Hbc:" << endl;
+        for (const auto& row : globalHbc) {
+            for (const auto& val : row) {
+                cout << setw(12) << val << " ";
+            }
+            cout << endl;
+        }
+    }
+    void printGlobalHSum() const {
+        cout << "\nSuma globalnych macierzy H i Hbc:" << endl;
+        for (int i = 0; i < matrixSize; ++i) {
+            for (int j = 0; j < matrixSize; ++j) {
+                cout << setw(12) << globalH[i][j] + globalHbc[i][j] << " ";
+            }
+            cout << endl;
+        }
+    }
 };
-void aggregateSystem(Grid* grid, const globalData& data, Solver& solver) {
-    // Przygotowanie elementu uniwersalnego (2x2 punkty całkowania)
-    ElemUniv elemUniv(4);
+void aggregateLocalHToGlobalH(vector<vector<double>>& globalH, const vector<vector<double>>& localH, const vector<int>& nodes) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            int globalI = nodes[i] - 1;
+            int globalJ = nodes[j] - 1;
+            globalH[globalI][globalJ] += localH[i][j];
+        }
+    }
+}
+void aggregateGlobalH(Grid* grid, const GlobalData& data, Solver& solver) {
+    ElemUniv elemUniv(9);
     elemUniv.computeShapeFunctionDerivatives();
 
-    // Punkty całkowania Gaussa
-    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(2);
+    
+    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(3);
 
-    // Iteracja po wszystkich elementach
+    
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
-        // Przygotowanie węzłów dla bieżącego elementu
+        
         vector<Node> elementNodes;
         vector<int> nodeIndices;
 
         for (int i = 0; i < 4; i++) {
             int nodeIndex = grid->elements[elem].ID[i];
             nodeIndices.push_back(nodeIndex);
-            elementNodes.push_back(grid->nodes[nodeIndex - 1]);  // -1 bo indeksowanie od 1
+            elementNodes.push_back(grid->nodes[nodeIndex - 1]);  
         }
 
-        // Obliczenie wyników dla punktów całkowania
+       
         vector<IntegrationPointResults> elemResults = computeIntegrationPointsResults(
             elementNodes, elemUniv, data.Conductivity, gaussPoints);
 
-        // Obliczenie lokalnej macierzy H
+        
         vector<vector<double>> localH = computeFinalHMatrix(elemResults, gaussPoints);
 
-        // Agregacja lokalnej macierzy H do globalnej
-        solver.aggregateLocalH(localH, nodeIndices);
+        
+        aggregateLocalHToGlobalH(solver.globalH, localH, nodeIndices);
     }
 }
+const double gaussPoints4[2][2] = {
+    {-1.0 / sqrt(3.0), 1.0 / sqrt(3.0)},
+    {1.0 / sqrt(3.0), -1.0 / sqrt(3.0)}
+};
+
+void calculateHbc(Element& element, const Grid* grid, const GlobalData& globalData, int gaussPointsCount) {
+    // Reset Hbc matrix
+    vector<vector<double>> Hbc(4, vector<double>(4, 0.0));
+
+    // Define surfaces for the element
+    Surface surfaces[4];
+
+    // Define surfaces based on element node IDs
+    // Surface points are in reference coordinates (ksi, eta)
+    // Surface 1 (bottom): y = -1
+    surfaces[0].npc = gaussPointsCount;
+    surfaces[0].nodeIds[0] = element.ID[0];
+    surfaces[0].nodeIds[1] = element.ID[1];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[0].pc[i][0] = gaussPoints4[i][0];  // ksi varies
+        surfaces[0].pc[i][1] = -1.0;                // eta is fixed at -1
+    }
+
+    // Surface 2 (right): x = 1
+    surfaces[1].npc = gaussPointsCount;
+    surfaces[1].nodeIds[0] = element.ID[1];
+    surfaces[1].nodeIds[1] = element.ID[2];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[1].pc[i][0] = 1.0;                 // ksi is fixed at 1
+        surfaces[1].pc[i][1] = gaussPoints4[i][0];  // eta varies
+    }
+
+    // Surface 3 (top): y = 1
+    surfaces[2].npc = gaussPointsCount;
+    surfaces[2].nodeIds[0] = element.ID[2];
+    surfaces[2].nodeIds[1] = element.ID[3];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[2].pc[i][0] = -gaussPoints4[i][0]; // ksi varies (inverted for top surface)
+        surfaces[2].pc[i][1] = 1.0;                 // eta is fixed at 1
+    }
+
+    // Surface 4 (left): x = -1
+    surfaces[3].npc = gaussPointsCount;
+    surfaces[3].nodeIds[0] = element.ID[3];
+    surfaces[3].nodeIds[1] = element.ID[0];
+    for (int i = 0; i < gaussPointsCount; ++i) {
+        surfaces[3].pc[i][0] = -1.0;                // ksi is fixed at -1
+        surfaces[3].pc[i][1] = -gaussPoints4[i][0]; // eta varies (inverted for left surface)
+    }
+
+    // Process each surface
+    for (int surfaceIdx = 0; surfaceIdx < 4; ++surfaceIdx) {
+        Surface& surface = surfaces[surfaceIdx];
+
+        // Calculate Jacobian for surface integration
+        double x1 = grid->nodes[surface.nodeIds[0] - 1].x;
+        double y1 = grid->nodes[surface.nodeIds[0] - 1].y;
+        double x2 = grid->nodes[surface.nodeIds[1] - 1].x;
+        double y2 = grid->nodes[surface.nodeIds[1] - 1].y;
+        double detJ = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2)) / 2.0;
+
+        // Integrate Hbc for this surface
+        for (int pc = 0; pc < surface.npc; ++pc) {
+            double ksi = surface.pc[pc][0];
+            double eta = surface.pc[pc][1];
+
+            // Calculate shape functions
+            double N1 = 0.25 * (1 - ksi) * (1 - eta);
+            double N2 = 0.25 * (1 + ksi) * (1 - eta);
+            double N3 = 0.25 * (1 + ksi) * (1 + eta);
+            double N4 = 0.25 * (1 - ksi) * (1 + eta);
+
+            // Shape function matrix
+            double N[4] = { N1, N2, N3, N4 };
+
+            // Compute Hbc contribution
+            for (int i = 0; i < 4; ++i) {
+                for (int j = 0; j < 4; ++j) {
+                    Hbc[i][j] += globalData.Alfa *
+                        N[i] * N[j] * detJ *
+                        (pc < 2 ? 1.0 : 1.0); // Weight for 2 point Gauss quadrature
+                }
+            }
+        }
+    }
+
+    // Copy Hbc to element
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            element.Hbc[i][j] = Hbc[i][j];
+        }
+    }
+}
+
+void aggregateHbc(Grid* grid, const GlobalData& data, Solver& solver) {
+    for (int elem = 0; elem < grid->ElementsNumber; elem++) {
+        // Compute Hbc for each element
+        calculateHbc(grid->elements[elem], grid, data, 2);
+
+        // Aggregate to global Hbc
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                int globalI = grid->elements[elem].ID[i] - 1;
+                int globalJ = grid->elements[elem].ID[j] - 1;
+                solver.globalHbc[globalI][globalJ] += grid->elements[elem].Hbc[i][j];
+            }
+        }
+    }
+}
+
+
+
+
+
 int main()
 {
-     globalData globalData;
+    GlobalData globalData;
     Grid* grid;
     string fileName = "test2_4_4.txt";
     readFile(fileName, globalData, &grid);
@@ -747,15 +890,35 @@ int main()
         /*for (int i = 0; i < elemResults.size(); i++) {
             cout << "\nPunkt całkowania " << i + 1 << " dla elementu " << elem + 1 << ":" << endl;
             elemResults[i].jakobian.printJacobian();
-        }*/
-        /*printDerivatives(elemResults);*/
+        }
+        printDerivatives(elemResults);*/
     }
     Solver solver(globalData.NodesNumber);
     cout << "\n=== AGREGACJA MACIERZY H GLOBALNEJ ===" << endl;
-    aggregateSystem(grid, globalData, solver);
+    aggregateGlobalH(grid, globalData, solver);
 
     // Wyświetlenie globalnej macierzy H
     solver.printGlobalH();
+
+    for (int i = 0; i < grid->ElementsNumber;i++) {
+        calculateHbc(grid->elements[i], grid, globalData,2);
+
+        // Print Hbc for each element
+        cout << "Macierz Hbc dla elementu " << i+1 << ":\n";
+        for (int j = 0; j < 4; ++j) {
+            for (int k = 0; k < 4; ++k) {
+                cout << setw(10) << grid->elements[i].Hbc[j][k] << " ";
+            }
+            cout << endl;
+        }
+        cout << endl;
+    }
+    cout << "\n=== AGREGACJA MACIERZY HBC ===" << endl;
+    aggregateHbc(grid, globalData, solver);
+
+    // Print global Hbc
+    solver.printGlobalHbc();
+    solver.printGlobalHSum();
     
     return 0;
 }
