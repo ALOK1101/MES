@@ -609,12 +609,14 @@ struct Solver {
     vector<vector<double>> globalH;
     vector<vector<double>> globalHbc; // New global Hbc vector
     vector<double> globalP; // New global P
+    vector<double> t; // wektor temperatur (rozwiązanie)
     int matrixSize;
 
     Solver(int nodesNumber) : matrixSize(nodesNumber) {
         globalH.resize(matrixSize, vector<double>(matrixSize, 0.0));
         globalHbc.resize(matrixSize, vector<double>(matrixSize, 0.0));
         globalP.resize(matrixSize, 0.0);
+        t.resize(matrixSize, 0.0);
     }
 
     void printGlobalH() const {
@@ -649,6 +651,84 @@ struct Solver {
         cout << "\nGlobalny wektor P:" << endl;
         for (const auto& val : globalP) {
             cout << setprecision(1) << val << " ";
+        }cout << endl;
+    }
+    vector<vector<double>> getAggregatedH() const {
+        vector<vector<double>> aggregatedH(matrixSize, vector<double>(matrixSize, 0.0));
+        for (int i = 0; i < matrixSize; ++i) {
+            for (int j = 0; j < matrixSize; ++j) {
+                aggregatedH[i][j] = globalH[i][j] + globalHbc[i][j];
+            }
+        }
+        return aggregatedH;
+    }
+    void solveGauss() {
+        vector<vector<double>> A = getAggregatedH(); // Macierz [H] + [Hbc]
+        vector<double> b = globalP; // Wektor {P}
+
+        int n = matrixSize;
+
+        // Eliminacja współczynników
+        for (int i = 0; i < n - 1; i++) {
+            // Wybór elementu głównego
+            int maxRow = i;
+            double maxVal = abs(A[i][i]);
+
+            for (int k = i + 1; k < n; k++) {
+                if (abs(A[k][i]) > maxVal) {
+                    maxVal = abs(A[k][i]);
+                    maxRow = k;
+                }
+            }
+
+            // Zamiana wierszy jeśli znaleziono lepszy element główny
+            if (maxRow != i) {
+                swap(A[i], A[maxRow]);
+                swap(b[i], b[maxRow]);
+            }
+
+            // Eliminacja Gaussa
+            for (int j = i + 1; j < n; j++) {
+                double factor = A[j][i] / A[i][i];
+
+                for (int k = i; k < n; k++) {
+                    A[j][k] -= factor * A[i][k];
+                }
+                b[j] -= factor * b[i];
+            }
+        }
+
+        // Rozwiązanie układu równań przez podstawienie wsteczne
+        t[n - 1] = b[n - 1] / A[n - 1][n - 1];
+
+        for (int i = n - 2; i >= 0; i--) {
+            double sum = 0.0;
+            for (int j = i + 1; j < n; j++) {
+                sum += A[i][j] * t[j];
+            }
+            t[i] = (b[i] - sum) / A[i][i];
+        }
+    }
+
+    // Metoda wyświetlająca wyniki (temperatury)
+    void printResults() const {
+        cout << "\nWyniki - temperatury w wezlach:" << endl;
+        for (int i = 0; i < matrixSize; ++i) {
+            cout << "Wezel " << i + 1 << ": " << fixed << setprecision(4) << t[i] << " C" << endl;
+        }
+    }
+
+    // Metoda wyświetlająca układ równań
+    void printEquationSystem() const {
+        vector<vector<double>> H = getAggregatedH();
+        cout << "\nUklad rownan [H + Hbc]{t} = {P}:" << endl;
+
+        for (int i = 0; i < matrixSize; ++i) {
+            cout << "[ ";
+            for (int j = 0; j < matrixSize; ++j) {
+                cout << setw(10) << fixed << setprecision(4) << H[i][j] << " ";
+            }
+            cout << "] [ t" << i + 1 << " ] = [ " << setw(10) << globalP[i] << " ]" << endl;
         }
     }
 };
@@ -696,206 +776,133 @@ const double gaussPoints4[2][2] = {
     {1.0 / sqrt(3.0), -1.0 / sqrt(3.0)}
 };
 
-void calculateHbc(Element& element, const Grid* grid, const GlobalData& globalData, int gaussPointsCount) {
-    // Reset Hbc matrix
-    vector<vector<double>> Hbc(4, vector<double>(4, 0.0));
+// Function to calculate shape functions for boundary conditions
+vector<double> calculateShapeFunctions(double ksi) {
+    vector<double> N(2);
+    N[0] = (1.0 - ksi) / 2.0;
+    N[1] = (1.0 + ksi) / 2.0;
+    return N;
+}
 
-    // Define surfaces for the element
-    Surface surfaces[4];
+// Function to calculate Hbc for a surface
+void calculateSurfaceHbc(double length, vector<vector<double>>& surfaceHbc, int numPoints, double alfa) {
+    auto gaussPoints = gaussPoints1D(numPoints);
 
-    // Define surfaces based on element node IDs
-    // Surface points are in reference coordinates (ksi, eta)
-    // Surface 1 (bottom): y = -1
-    surfaces[0].npc = gaussPointsCount;
-    surfaces[0].nodeIds[0] = element.ID[0];
-    surfaces[0].nodeIds[1] = element.ID[1];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[0].pc[i][0] = gaussPoints4[i][0];  // ksi varies
-        surfaces[0].pc[i][1] = -1.0;                // eta is fixed at -1
-    }
+    for (const auto& point : gaussPoints) {
+        vector<double> N = calculateShapeFunctions(point.ksi);
 
-    // Surface 2 (right): x = 1
-    surfaces[1].npc = gaussPointsCount;
-    surfaces[1].nodeIds[0] = element.ID[1];
-    surfaces[1].nodeIds[1] = element.ID[2];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[1].pc[i][0] = 1.0;                 // ksi is fixed at 1
-        surfaces[1].pc[i][1] = gaussPoints4[i][0];  // eta varies
-    }
-
-    // Surface 3 (top): y = 1
-    surfaces[2].npc = gaussPointsCount;
-    surfaces[2].nodeIds[0] = element.ID[2];
-    surfaces[2].nodeIds[1] = element.ID[3];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[2].pc[i][0] = -gaussPoints4[i][0]; // ksi varies (inverted for top surface)
-        surfaces[2].pc[i][1] = 1.0;                 // eta is fixed at 1
-    }
-
-    // Surface 4 (left): x = -1
-    surfaces[3].npc = gaussPointsCount;
-    surfaces[3].nodeIds[0] = element.ID[3];
-    surfaces[3].nodeIds[1] = element.ID[0];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[3].pc[i][0] = -1.0;                // ksi is fixed at -1
-        surfaces[3].pc[i][1] = -gaussPoints4[i][0]; // eta varies (inverted for left surface)
-    }
-
-    // Process each surface
-    for (int surfaceIdx = 0; surfaceIdx < 4; ++surfaceIdx) {
-        Surface& surface = surfaces[surfaceIdx];
-
-        // Calculate Jacobian for surface integration
-        double x1 = grid->nodes[surface.nodeIds[0] - 1].x;
-        double y1 = grid->nodes[surface.nodeIds[0] - 1].y;
-        double x2 = grid->nodes[surface.nodeIds[1] - 1].x;
-        double y2 = grid->nodes[surface.nodeIds[1] - 1].y;
-        double detJ = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2)) / 2.0;
-
-        // Integrate Hbc for this surface
-        for (int pc = 0; pc < surface.npc; ++pc) {
-            double ksi = surface.pc[pc][0];
-            double eta = surface.pc[pc][1];
-
-            // Calculate shape functions
-            double N1 = 0.25 * (1 - ksi) * (1 - eta);
-            double N2 = 0.25 * (1 + ksi) * (1 - eta);
-            double N3 = 0.25 * (1 + ksi) * (1 + eta);
-            double N4 = 0.25 * (1 - ksi) * (1 + eta);
-
-            // Shape function matrix
-            double N[4] = { N1, N2, N3, N4 };
-
-            // Compute Hbc contribution
-            for (int i = 0; i < 4; ++i) {
-                for (int j = 0; j < 4; ++j) {
-                    Hbc[i][j] += globalData.Alfa *
-                        N[i] * N[j] * detJ *
-                        (pc < 2 ? 1.0 : 1.0); // Weight for 2 point Gauss quadrature
-                }
+        for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 2; j++) {
+                surfaceHbc[i][j] += alfa * N[i] * N[j] * length / 2.0 * point.weight;
             }
-        }
-    }
-
-    // Copy Hbc to element
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            element.Hbc[i][j] = Hbc[i][j];
         }
     }
 }
 
+// Function to check if nodes form a boundary edge
+bool isBoundaryEdge(const Node& node1, const Node& node2) {
+    return node1.BC && node2.BC;
+}
+
+// Function to calculate surface length
+double calculateSurfaceLength(const Node& node1, const Node& node2) {
+    return sqrt(pow(node2.x - node1.x, 2) + pow(node2.y - node1.y, 2));
+}
+
+// Function to calculate local P vector for a surface
+void calculateSurfaceP(double length, vector<double>& surfaceP, int numPoints, double alfa, double tot) {
+    auto gaussPoints = gaussPoints1D(numPoints);
+
+    for (const auto& point : gaussPoints) {
+        vector<double> N = calculateShapeFunctions(point.ksi);
+
+        for (int i = 0; i < 2; i++) {
+            surfaceP[i] += alfa * tot * N[i] * length / 2.0 * point.weight;
+        }
+    }
+}
+
+// Function to calculate Hbc for an element
+void calculateHbc(Element& element, Grid* grid, const GlobalData& data, int numPoints) {
+    // Initialize Hbc matrix
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            element.Hbc[i][j] = 0.0;
+        }
+    }
+
+    // Initialize local P vector
+    element.localP = vector<double>(4, 0.0);
+
+    // Define element edges (pairs of local node indices)
+    vector<pair<int, int>> edges = { {0,1}, {1,2}, {2,3}, {3,0} };
+
+    for (const auto& edge : edges) {
+        int node1_idx = element.ID[edge.first] - 1;
+        int node2_idx = element.ID[edge.second] - 1;
+
+        Node& node1 = grid->nodes[node1_idx];
+        Node& node2 = grid->nodes[node2_idx];
+
+        if (isBoundaryEdge(node1, node2)) {
+            // Calculate surface length
+            double length = calculateSurfaceLength(node1, node2);
+
+            // Calculate surface Hbc
+            vector<vector<double>> surfaceHbc(2, vector<double>(2, 0.0));
+            calculateSurfaceHbc(length, surfaceHbc, numPoints, data.Alfa);
+
+            // Calculate surface P vector
+            vector<double> surfaceP(2, 0.0);
+            calculateSurfaceP(length, surfaceP, numPoints, data.Alfa, data.Tot);
+
+            // Aggregate surface Hbc into element Hbc
+            element.Hbc[edge.first][edge.first] += surfaceHbc[0][0];
+            element.Hbc[edge.first][edge.second] += surfaceHbc[0][1];
+            element.Hbc[edge.second][edge.first] += surfaceHbc[1][0];
+            element.Hbc[edge.second][edge.second] += surfaceHbc[1][1];
+
+            // Aggregate surface P into element localP
+            element.localP[edge.first] += surfaceP[0];
+            element.localP[edge.second] += surfaceP[1];
+        }
+    }
+}
+
+// Function to aggregate local Hbc matrices into global Hbc matrix
 void aggregateHbc(Grid* grid, const GlobalData& data, Solver& solver) {
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
-        // Compute Hbc for each element
-        calculateHbc(grid->elements[elem], grid, data, 2);
+        Element& element = grid->elements[elem];
 
-        // Aggregate to global Hbc
+        // Aggregate Hbc
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
-                int globalI = grid->elements[elem].ID[i] - 1;
-                int globalJ = grid->elements[elem].ID[j] - 1;
-                solver.globalHbc[globalI][globalJ] += grid->elements[elem].Hbc[i][j];
+                int globalI = element.ID[i] - 1;
+                int globalJ = element.ID[j] - 1;
+                solver.globalHbc[globalI][globalJ] += element.Hbc[i][j];
             }
         }
     }
 }
-void calculateLocalPVector(Element& element, const Grid* grid, const GlobalData& globalData, int gaussPointsCount) {
-    // Reset local P vector
-    element.localP.assign(4, 0.0);
 
-    // Define surfaces for the element
-    Surface surfaces[4];
+// Function to aggregate local P vectors into global P vector
+void aggregateLocalPToGlobalP(Grid* grid, Solver& solver, const GlobalData& data) {
+    // Clear global P vector
+    fill(solver.globalP.begin(), solver.globalP.end(), 0.0);
 
-    // Define surfaces based on element node IDs
-    // Surface points are in reference coordinates (ksi, eta)
-    // Surface 1 (bottom): y = -1
-    surfaces[0].npc = gaussPointsCount;
-    surfaces[0].nodeIds[0] = element.ID[0];
-    surfaces[0].nodeIds[1] = element.ID[1];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[0].pc[i][0] = gaussPoints4[i][0];  // ksi varies
-        surfaces[0].pc[i][1] = -1.0;                // eta is fixed at -1
-    }
-
-    // Surface 2 (right): x = 1
-    surfaces[1].npc = gaussPointsCount;
-    surfaces[1].nodeIds[0] = element.ID[1];
-    surfaces[1].nodeIds[1] = element.ID[2];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[1].pc[i][0] = 1.0;                 // ksi is fixed at 1
-        surfaces[1].pc[i][1] = gaussPoints4[i][0];  // eta varies
-    }
-
-    // Surface 3 (top): y = 1
-    surfaces[2].npc = gaussPointsCount;
-    surfaces[2].nodeIds[0] = element.ID[2];
-    surfaces[2].nodeIds[1] = element.ID[3];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[2].pc[i][0] = -gaussPoints4[i][0]; // ksi varies (inverted for top surface)
-        surfaces[2].pc[i][1] = 1.0;                 // eta is fixed at 1
-    }
-
-    // Surface 4 (left): x = -1
-    surfaces[3].npc = gaussPointsCount;
-    surfaces[3].nodeIds[0] = element.ID[3];
-    surfaces[3].nodeIds[1] = element.ID[0];
-    for (int i = 0; i < gaussPointsCount; ++i) {
-        surfaces[3].pc[i][0] = -1.0;                // ksi is fixed at -1
-        surfaces[3].pc[i][1] = -gaussPoints4[i][0]; // eta varies (inverted for left surface)
-    }
-
-    // Process each surface
-    for (int surfaceIdx = 0; surfaceIdx < 4; ++surfaceIdx) {
-        Surface& surface = surfaces[surfaceIdx];
-
-        // Calculate Jacobian for surface integration
-        double x1 = grid->nodes[surface.nodeIds[0] - 1].x;
-        double y1 = grid->nodes[surface.nodeIds[0] - 1].y;
-        double x2 = grid->nodes[surface.nodeIds[1] - 1].x;
-        double y2 = grid->nodes[surface.nodeIds[1] - 1].y;
-        double detJ = sqrt(pow(x2 - x1, 2) + pow(y2 - y1, 2)) / 2.0;
-
-        // Integrate P for this surface
-        for (int pc = 0; pc < surface.npc; ++pc) {
-            double ksi = surface.pc[pc][0];
-            double eta = surface.pc[pc][1];
-
-            // Calculate shape functions
-            double N1 = 0.25 * (1 - ksi) * (1 - eta);
-            double N2 = 0.25 * (1 + ksi) * (1 - eta);
-            double N3 = 0.25 * (1 + ksi) * (1 + eta);
-            double N4 = 0.25 * (1 - ksi) * (1 + eta);
-
-            // Shape function matrix
-            double N[4] = { N1, N2, N3, N4 };
-
-            // Compute local P contribution
-            for (int i = 0; i < 4; ++i) {
-                element.localP[i] += globalData.Alfa * globalData.Tot * N[i] * detJ *
-                    (pc < 2 ? 1.0 : 1.0); // Weight for 2 point Gauss quadrature
-            }
-        }
-    }
-    for (int i = 0; i < 4; i++) {
-        cout <<setprecision(1)<< element.localP[i] << " ";
-    }
-    cout << endl;
-}
-
-void aggregateLocalPToGlobalP(Grid* grid, Solver& solver, GlobalData globalData) {
+    // Aggregate local P vectors
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
-        // Compute local P for each element
-        calculateLocalPVector(grid->elements[elem], grid, globalData, 2);
+        Element& element = grid->elements[elem];
 
-        // Aggregate to global P
         for (int i = 0; i < 4; i++) {
-            int globalI = grid->elements[elem].ID[i] - 1;
-            solver.globalP[globalI] += grid->elements[elem].localP[i];
+            int globalI = element.ID[i] - 1;
+            solver.globalP[globalI] += element.localP[i];
         }
     }
 }
-
+void initializeTemperatures(Solver& solver, const GlobalData& data) {
+    fill(solver.t.begin(), solver.t.end(), data.InitialTemp);
+}
 
 
 
@@ -1002,29 +1009,49 @@ int main()
     // Wyświetlenie globalnej macierzy H
     solver.printGlobalH();
 
-    for (int i = 0; i < grid->ElementsNumber;i++) {
-        calculateHbc(grid->elements[i], grid, globalData,2);
+    cout << "\n=== OBLICZENIA HBC DLA ELEMENTÓW ===" << endl;
+    for (int i = 0; i < grid->ElementsNumber; i++) {
+        calculateHbc(grid->elements[i], grid, globalData, 2);
 
-        // Print Hbc for each element
-        cout << "Macierz Hbc dla elementu " << i+1 << ":\n";
-        for (int j = 0; j < 4; ++j) {
-            for (int k = 0; k < 4; ++k) {
+        cout << "\nMacierz Hbc dla elementu " << i + 1 << ":" << endl;
+        for (int j = 0; j < 4; j++) {
+            for (int k = 0; k < 4; k++) {
                 cout << setw(10) << grid->elements[i].Hbc[j][k] << " ";
             }
             cout << endl;
         }
-       
+
+        cout << "\nWektor P dla elementu " << i + 1 << ":" << endl;
+        for (int j = 0; j < 4; j++) {
+            cout << setw(10) << grid->elements[i].localP[j] << " ";
+        }
+        cout << endl;
     }
+
     cout << "\n=== AGREGACJA MACIERZY HBC ===" << endl;
     aggregateHbc(grid, globalData, solver);
-
-    // Print global Hbc
     solver.printGlobalHbc();
-    solver.printGlobalHSum();
-    cout << "\n=== OBLICZENIE I AGREGACJA WEKTORA P ===" << endl;
-    aggregateLocalPToGlobalP(grid, solver, globalData );
 
-    // Print global P vector
+    cout << "\n=== SUMA MACIERZY H + HBC ===" << endl;
+    solver.printGlobalHSum();
+
+    cout << "\n=== AGREGACJA WEKTORA P ===" << endl;
+    aggregateLocalPToGlobalP(grid, solver, globalData);
     solver.printGlobalP();
+
+    cout << "\n=== ROZWIAZYWANIE UKLADU ROWNAN ===" << endl;
+
+    // Inicjalizacja temperatur początkowych
+    initializeTemperatures(solver, globalData);
+
+    // Wyświetlenie układu równań przed rozwiązaniem
+    solver.printEquationSystem();
+
+    // Rozwiązanie układu równań
+    solver.solveGauss();
+
+    // Wyświetlenie wyników
+    solver.printResults();
+
     return 0;
 }
