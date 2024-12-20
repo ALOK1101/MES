@@ -16,64 +16,7 @@ struct GaussPoint {
     long double ksi;
     long double weight;
 };
-//struct Jakobian {
-//    double J[2][2];
-//    double J1[2][2];
-//    double detJ;
-//    vector<vector<double>> H;
-//
-//    Jakobian() {
-//        for (int i = 0; i < 2; i++) {
-//            detJ = 0.0;
-//            for (int j = 0; j < 4; j++) {
-//                J[i][j] = 0.0;
-//                J1[i][j] = 0.0;
-//            }
-//        }
-//    }
-//    void computeJacobian(const vector<Node>& elementNodes, const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) {
-//        // Reset Jacobian matrix
-//        J[0][0] = J[0][1] = J[1][0] = J[1][1] = 0.0;
-//
-//        for (int i = 0; i < 4; ++i) {
-//            J[0][0] += dN_dEta[0][i] * elementNodes[i].x;  
-//            J[0][1] += dN_dEta[0][i] * elementNodes[i].y;
-//            J[1][0] += dN_dKsi[0][i] * elementNodes[i].x;
-//            J[1][1] += dN_dKsi[0][i] * elementNodes[i].y;
-//        }
-//
-//        detJ = J[0][0] * J[1][1] - J[0][1] * J[1][0];
-//    }
-//    void printJacobian(const long double dN_dEta[4][4], const long double dN_dKsi[4][4]) const {
-//        cout << fixed << setprecision(9);
-//
-//        cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
-//        for (int i = 0; i < 4; ++i) {
-//            cout << "pc" << i + 1 << "  ";
-//            for (int j = 0; j < 4; ++j) {
-//                cout << setw(12) << dN_dEta[i][j] << " ";
-//            }
-//            cout << endl;
-//        }
-//
-//        cout << "\n        d N1/d Eta     d N2/d Eta     d N3/d Eta     d N4/d Eta" << endl;
-//        for (int i = 0; i < 4; ++i) {
-//            cout << "pc" << i + 1 << "  ";
-//            for (int j = 0; j < 4; ++j) {
-//                cout << setw(12) << dN_dKsi[i][j] << " ";
-//            }
-//            cout << endl;
-//        }
-//
-//        
-//            cout << "\nJacobian:"<< endl;
-//            cout << "[ " << setw(12) << this->J[0][0] << " " << setw(12) << this->J[0][1] << " ]" << endl;
-//            cout << "[ " << setw(12) << this->J[1][0] << " " << setw(12) << this->J[1][1] << " ]" << endl;
-//            cout << "detJ= " << this->detJ << endl;
-//       
-//    }
-//    
-//};
+
 struct Jakobian {
     double J[2][2];
     double J1[2][2];
@@ -127,15 +70,15 @@ struct Element {
     Jakobian jakobian;
     double Hbc[4][4];  // Existing boundary condition heat transfer matrix
     vector<double> localP;  // New vector to store local P for each element
+    vector<vector<double>> C;  // Macierz C dla elementu
 
-    Element() {
+    Element() : localP(4, 0.0), C(4, vector<double>(4, 0.0)) {
         for (int i = 0; i < 4; ++i) {
             ID[i] = 0;
             for (int j = 0; j < 4; ++j) {
                 Hbc[i][j] = 0.0;
             }
         }
-        localP.resize(4, 0.0);  // Initialize localP with 4 elements set to 0
     }
 };
 
@@ -607,16 +550,20 @@ struct Surface {
 };
 struct Solver {
     vector<vector<double>> globalH;
-    vector<vector<double>> globalHbc; // New global Hbc vector
-    vector<double> globalP; // New global P
-    vector<double> t; // wektor temperatur (rozwiązanie)
+    vector<vector<double>> globalHbc;
+    vector<vector<double>> globalC;  // Globalna macierz C
+    vector<double> globalP;
+    vector<double> t;  // temperatury w aktualnym kroku czasowym
+    vector<double> t_prev;  // temperatury w poprzednim kroku czasowym
     int matrixSize;
 
     Solver(int nodesNumber) : matrixSize(nodesNumber) {
         globalH.resize(matrixSize, vector<double>(matrixSize, 0.0));
         globalHbc.resize(matrixSize, vector<double>(matrixSize, 0.0));
+        globalC.resize(matrixSize, vector<double>(matrixSize, 0.0));
         globalP.resize(matrixSize, 0.0);
         t.resize(matrixSize, 0.0);
+        t_prev.resize(matrixSize, 0.0);
     }
 
     void printGlobalH() const {
@@ -652,6 +599,15 @@ struct Solver {
         for (const auto& val : globalP) {
             cout << setprecision(1) << val << " ";
         }cout << endl;
+    }
+    void printGlobalC() const {
+        cout << "\nGlobalna macierz C:" << endl;
+        for (const auto& row : globalC) {
+            for (const auto& val : row) {
+                cout << setw(12) << val << " ";
+            }
+            cout << endl;
+        }
     }
     vector<vector<double>> getAggregatedH() const {
         vector<vector<double>> aggregatedH(matrixSize, vector<double>(matrixSize, 0.0));
@@ -901,7 +857,165 @@ void initializeTemperatures(Solver& solver, const GlobalData& data) {
     fill(solver.t.begin(), solver.t.end(), data.InitialTemp);
 }
 
+vector<vector<double>> calculateLocalC(const vector<Node>& elementNodes,
+    const ElemUniv& elemUniv,
+    double specificHeat,
+    double density,
+    const vector<pair<GaussPoint, GaussPoint>>& points) {
+    vector<vector<double>> localC(4, vector<double>(4, 0.0));
 
+    // Dla każdego punktu całkowania
+    for (int point = 0; point < points.size(); point++) {
+        // Obliczenie jakobianu dla tego punktu
+        Jakobian jac;
+        jac.computeJacobian(elementNodes, elemUniv.dN_dEta[point], elemUniv.dN_dKsi[point]);
+
+        // Obliczenie funkcji kształtu N dla punktu całkowania
+        double ksi = points[point].first.ksi;
+        double eta = points[point].second.ksi;
+
+        vector<double> N = {
+            0.25 * (1.0 - ksi) * (1.0 - eta),
+            0.25 * (1.0 + ksi) * (1.0 - eta),
+            0.25 * (1.0 + ksi) * (1.0 + eta),
+            0.25 * (1.0 - ksi) * (1.0 + eta)
+        };
+
+        // Obliczenie macierzy C dla punktu całkowania
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                localC[i][j] += specificHeat * density * N[i] * N[j] * jac.detJ *
+                    points[point].first.weight * points[point].second.weight;
+            }
+        }
+
+    }
+  /*  cout << "macierz c dla elementu:\n";
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            cout << localC[i][j] << " " ;
+        }
+        cout << endl;
+    }*/
+    return localC;
+}
+void aggregateLocalCToGlobalC(vector<vector<double>>& globalC,
+    const vector<vector<double>>& localC,
+    const vector<int>& nodes) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            int globalI = nodes[i] - 1;
+            int globalJ = nodes[j] - 1;
+            globalC[globalI][globalJ] += localC[i][j];
+        }
+    }
+}
+void calculateGlobalMatrices(Grid* grid, GlobalData& data, Solver& solver) {
+    ElemUniv elemUniv(4);  
+    elemUniv.computeShapeFunctionDerivatives();
+    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(2);
+
+    for (int elem = 0; elem < grid->ElementsNumber; elem++) {
+        vector<Node> elementNodes;
+        vector<int> nodeIndices;
+
+        for (int i = 0; i < 4; i++) {
+            int nodeIndex = grid->elements[elem].ID[i];
+            nodeIndices.push_back(nodeIndex);
+            elementNodes.push_back(grid->nodes[nodeIndex - 1]);
+        }
+
+        // Obliczenie lokalnej macierzy C
+        vector<vector<double>> localC = calculateLocalC(elementNodes, elemUniv,
+            data.SpecificHeat, data.Density, points);
+
+        // Agregacja macierzy C
+        aggregateLocalCToGlobalC(solver.globalC, localC, nodeIndices);
+    }
+}
+void solveTimeDependent(Solver& solver, const GlobalData& data) {
+    int timeSteps = data.SimulationTime / data.SimulationStepTime;
+    double dt = data.SimulationStepTime;
+
+    // Przygotowanie macierzy układu równań [C]/dt + [H]
+    vector<vector<double>> A(solver.matrixSize, vector<double>(solver.matrixSize, 0.0));
+    vector<double> b(solver.matrixSize, 0.0);
+
+    // Kopiowanie początkowych temperatur
+    solver.t_prev = vector<double>(solver.matrixSize, data.InitialTemp);
+
+    for (int step = 1; step <= timeSteps; step++) {
+        cout << "\nKrok czasowy " << step << "/" << timeSteps << " (t = " << step * dt << "s)" << endl;
+
+        // Formowanie macierzy układu równań
+        for (int i = 0; i < solver.matrixSize; i++) {
+            for (int j = 0; j < solver.matrixSize; j++) {
+                A[i][j] = solver.globalC[i][j] / dt + solver.globalH[i][j] + solver.globalHbc[i][j];
+            }
+
+            // Formowanie wektora prawej strony
+            b[i] = solver.globalP[i];
+            for (int j = 0; j < solver.matrixSize; j++) {
+                b[i] += (solver.globalC[i][j] / dt) * solver.t_prev[j];
+            }
+        }
+
+        // Rozwiązanie układu równań metodą Gaussa
+        vector<double> new_t(solver.matrixSize, 0.0);
+
+        // Kopiowanie macierzy A i wektora b dla eliminacji Gaussa
+        vector<vector<double>> A_temp = A;
+        vector<double> b_temp = b;
+
+        // Eliminacja Gaussa
+        for (int i = 0; i < solver.matrixSize - 1; i++) {
+            // Wybór elementu głównego (pivoting)
+            int maxRow = i;
+            double maxVal = abs(A_temp[i][i]);
+            for (int k = i + 1; k < solver.matrixSize; k++) {
+                if (abs(A_temp[k][i]) > maxVal) {
+                    maxVal = abs(A_temp[k][i]);
+                    maxRow = k;
+                }
+            }
+
+            // Zamiana wierszy jeśli znaleziono lepszy element główny
+            if (maxRow != i) {
+                swap(A_temp[i], A_temp[maxRow]);
+                swap(b_temp[i], b_temp[maxRow]);
+            }
+
+            for (int j = i + 1; j < solver.matrixSize; j++) {
+                double factor = A_temp[j][i] / A_temp[i][i];
+                for (int k = i; k < solver.matrixSize; k++) {
+                    A_temp[j][k] -= factor * A_temp[i][k];
+                }
+                b_temp[j] -= factor * b_temp[i];
+            }
+        }
+
+        // Podstawienie wsteczne
+        for (int i = solver.matrixSize - 1; i >= 0; i--) {
+            double sum = 0.0;
+            for (int j = i + 1; j < solver.matrixSize; j++) {
+                sum += A_temp[i][j] * new_t[j];
+            }
+            new_t[i] = (b_temp[i] - sum) / A_temp[i][i];
+        }
+
+        // Aktualizacja temperatur
+        solver.t = new_t;
+
+        // Wyświetlenie wyników dla aktualnego kroku czasowego
+        cout << "Temperatury w wezlach:" << endl;
+        for (int i = 0; i < solver.matrixSize; i++) {
+            cout << "Wezel " << i + 1 << ": " << fixed << setprecision(4) << solver.t[i] << " C" << endl;
+        }
+
+        // Aktualizacja temperatur dla następnego kroku czasowego
+        solver.t_prev = solver.t;
+    }
+}
 
 int main()
 {
@@ -1036,19 +1150,34 @@ int main()
     aggregateLocalPToGlobalP(grid, solver, globalData);
     solver.printGlobalP();
 
-    cout << "\n=== ROZWIAZYWANIE UKLADU ROWNAN ===" << endl;
+    cout << "\n=== OBLICZANIE MACIERZY C ===" << endl;
+    calculateGlobalMatrices(grid, globalData, solver);
+    solver.printGlobalC();
+
+    cout << "\n=== ROZWIAZANIE UKLADU ROWNAN Z UWZGLEDNIENIEM CZASU ===" << endl;
 
     // Inicjalizacja temperatur początkowych
-    initializeTemperatures(solver, globalData);
+    for (int i = 0; i < solver.matrixSize; i++) {
+        solver.t[i] = globalData.InitialTemp;
+        solver.t_prev[i] = globalData.InitialTemp;
+    }
 
-    // Wyświetlenie układu równań przed rozwiązaniem
-    solver.printEquationSystem();
+    // Rozwiązanie układu równań z uwzględnieniem czasu
+    solveTimeDependent(solver, globalData);
 
-    // Rozwiązanie układu równań
-    solver.solveGauss();
+    //cout << "\n=== ROZWIAZYWANIE UKLADU ROWNAN ===" << endl;
 
-    // Wyświetlenie wyników
-    solver.printResults();
+    //// Inicjalizacja temperatur początkowych
+    //initializeTemperatures(solver, globalData);
+
+    //// Wyświetlenie układu równań przed rozwiązaniem
+    //solver.printEquationSystem();
+
+    //// Rozwiązanie układu równań
+    //solver.solveGauss();
+
+    //// Wyświetlenie wyników
+    //solver.printResults();
 
     return 0;
 }
