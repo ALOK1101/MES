@@ -771,10 +771,7 @@ void aggregateGlobalH(Grid* grid, const GlobalData& data, Solver& solver) {
         aggregateLocalHToGlobalH(solver.globalH, localH, nodeIndices);
     }
 }
-const double gaussPoints4[2][2] = {
-    {-1.0 / sqrt(3.0), 1.0 / sqrt(3.0)},
-    {1.0 / sqrt(3.0), -1.0 / sqrt(3.0)}
-};
+
 
 // Function to calculate shape functions for boundary conditions
 vector<double> calculateShapeFunctions(double ksi) {
