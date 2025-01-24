@@ -130,7 +130,9 @@
     <ClCompile Include="MES.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <Text Include="Test1_31_31.txt" />
     <Text Include="Test1_4_4.txt" />
+    <Text Include="Test2_31_31.txt" />
     <Text Include="Test2_4_4.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

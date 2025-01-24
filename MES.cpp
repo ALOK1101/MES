@@ -10,7 +10,7 @@ struct Node {
     long double x, y;
     bool BC;
 
-    Node() : x(0.0), y(0.0), BC(false) {}  // Default constructor
+    Node() : x(0.0), y(0.0), BC(false) {}  
 };
 struct GaussPoint {
     long double ksi;
@@ -68,9 +68,9 @@ struct IntegrationPointResults {
 struct Element {
     int ID[4];
     Jakobian jakobian;
-    double Hbc[4][4];  // Existing boundary condition heat transfer matrix
-    vector<double> localP;  // New vector to store local P for each element
-    vector<vector<double>> C;  // Macierz C dla elementu
+    double Hbc[4][4];  
+    vector<double> localP; 
+    vector<vector<double>> C;  
 
     Element() : localP(4, 0.0), C(4, vector<double>(4, 0.0)) {
         for (int i = 0; i < 4; ++i) {
@@ -118,66 +118,91 @@ struct Grid {
 };
 
 struct ElemUniv {
-    int npc; // liczba punktów całkowania
-    vector<vector<long double>> dN_dEta; // rozmiar [npc][4]
-    vector<vector<long double>> dN_dKsi; // rozmiar [npc][4]
-    vector<double> N_i; // rozmiar [4]
+    int npc; 
+    vector<vector<long double>> dN_dEta; 
+    vector<vector<long double>> dN_dKsi; 
+    vector<double> N_i; 
+    vector<long double> weights; 
 
     ElemUniv(int numPoints) : npc(numPoints), N_i(4, 0.0),
         dN_dEta(numPoints, vector<long double>(4, 0.0)),
-        dN_dKsi(numPoints, vector<long double>(4, 0.0)) {
-        // Konstruktor inicjalizuje wektory z odpowiednimi rozmiarami i wartościami zerowymi
+        dN_dKsi(numPoints, vector<long double>(4, 0.0)),
+        weights(numPoints, 0.0) {
+        
     }
 
     void computeShapeFunctionDerivatives() {
-        // Określenie liczby punktów Gaussa na jednym wymiarze (2 dla 2x2, 3 dla 3x3)
+        
         int gaussOrder = static_cast<int>(sqrt(npc));
-
-        // Sprawdzenie, czy npc to kwadrat liczby całkowitej
+        
         if (gaussOrder * gaussOrder != npc) {
-            throw std::invalid_argument("Invalid number of integration points (npc). Must be a perfect square (4, 9, etc.).");
+            throw std::invalid_argument("Invalid number of integration points (npc). Must be a perfect square (4, 9, 16, etc.).");
         }
 
-        // Generowanie współrzędnych punktów Gaussa
         vector<long double> gaussPoints(gaussOrder);
+        vector<long double> gaussWeights(gaussOrder);
+
         if (gaussOrder == 2) {
-            gaussPoints = { -1.0 / sqrt(3.0), 1.0 / sqrt(3.0) };
+            long double point = 1.0 / sqrt(3.0);
+            gaussPoints = { -point, point };
+            gaussWeights = { 1.0, 1.0 };
         }
         else if (gaussOrder == 3) {
             gaussPoints = { -sqrt(3.0 / 5.0), 0.0, sqrt(3.0 / 5.0) };
+            gaussWeights = { 5.0 / 9.0, 8.0 / 9.0, 5.0 / 9.0 };
+        }
+        else if (gaussOrder == 4) {
+            
+            gaussPoints = {
+                -0.861136311594053,
+                -0.339981043584856,
+                0.339981043584856,
+                0.861136311594053
+            };
+            gaussWeights = {
+                0.347854845137454,
+                0.652145154862546,
+                0.652145154862546,
+                0.347854845137454
+            };
         }
         else {
-            throw std::invalid_argument("Unsupported Gauss order. Supported orders are 2x2 and 3x3.");
+            throw std::invalid_argument("Unsupported Gauss order. Supported orders are 2x2, 3x3, and 4x4.");
         }
 
-        // Generowanie wartości ksi i eta dla wszystkich punktów całkowania
+        
         vector<long double> ksi_values(npc), eta_values(npc);
+        int idx = 0;
         for (int i = 0; i < gaussOrder; ++i) {
             for (int j = 0; j < gaussOrder; ++j) {
-                ksi_values[i * gaussOrder + j] = gaussPoints[j];
-                eta_values[i * gaussOrder + j] = gaussPoints[i];
+                ksi_values[idx] = gaussPoints[j];
+                eta_values[idx] = gaussPoints[i];
+                weights[idx] = gaussWeights[i] * gaussWeights[j]; 
+                idx++;
             }
         }
 
-        // Obliczanie pochodnych funkcji kształtu dla każdego punktu
+      
         for (int i = 0; i < npc; ++i) {
             long double ksi = ksi_values[i];
             long double eta = eta_values[i];
 
+            
             dN_dEta[i][0] = -0.25 * (1.0 - ksi);
             dN_dEta[i][1] = 0.25 * (1.0 - ksi);
             dN_dEta[i][2] = 0.25 * (1.0 + ksi);
             dN_dEta[i][3] = -0.25 * (1.0 + ksi);
 
+            
             dN_dKsi[i][0] = -0.25 * (1.0 - eta);
             dN_dKsi[i][1] = -0.25 * (1.0 + eta);
             dN_dKsi[i][2] = 0.25 * (1.0 + eta);
             dN_dKsi[i][3] = 0.25 * (1.0 - eta);
         }
     }
+
     void printShapeFunctionDerivatives() const {
         cout << fixed << setprecision(9);
-
         cout << "        d N1/d Ksi      d N2/d Ksi      d N3/d Ksi      d N4/d Ksi" << endl;
         for (int i = 0; i < npc; ++i) {
             cout << "pc" << i + 1 << "  ";
@@ -195,8 +220,12 @@ struct ElemUniv {
             }
             cout << endl;
         }
-    }
 
+        cout << "\nWagi punktów całkowania:" << endl;
+        for (int i = 0; i < npc; ++i) {
+            cout << "pc" << i + 1 << ": " << weights[i] << endl;
+        }
+    }
 };
 void printMatrix(const vector<vector<long double>>& matrix) {
     for (const auto& row : matrix) {
@@ -369,18 +398,28 @@ void readFile(string fileName, GlobalData& globalData, Grid** grid) {
 
 vector<GaussPoint> gaussPoints1D(int numPoints) {
     vector<GaussPoint> points;
-
     if (numPoints == 1) {
-        points.push_back({ 0.0, 2.0 });  
+        points.push_back({ 0.0, 2.0 });
     }
     else if (numPoints == 2) {
-        points.push_back({ -1.0 / sqrt(3.0), 1.0 }); 
+        points.push_back({ -1.0 / sqrt(3.0), 1.0 });
         points.push_back({ 1.0 / sqrt(3.0), 1.0 });
     }
     else if (numPoints == 3) {
-        points.push_back({ -sqrt(3.0 / 5.0), 5.0 / 9.0 }); 
+        points.push_back({ -sqrt(3.0 / 5.0), 5.0 / 9.0 });
         points.push_back({ 0.0, 8.0 / 9.0 });
         points.push_back({ sqrt(3.0 / 5.0), 5.0 / 9.0 });
+    }
+    else if (numPoints == 4) {
+        double a = sqrt((3.0 - 2.0 * sqrt(6.0 / 5.0)) / 7.0);
+        double b = sqrt((3.0 + 2.0 * sqrt(6.0 / 5.0)) / 7.0);
+        double wa = (18.0 + sqrt(30.0)) / 36.0;
+        double wb = (18.0 - sqrt(30.0)) / 36.0;
+
+        points.push_back({ -b, wb });
+        points.push_back({ -a, wa });
+        points.push_back({ a, wa });
+        points.push_back({ b, wb });
     }
     return points;
 }
@@ -544,17 +583,17 @@ void printHMatrix(const vector<vector<double>>& H) {
     }
 }
 struct Surface {
-    double pc[4][2]; // Gauss points coordinates 
-    int npc; // Number of integration points 
-    int nodeIds[2]; // Node IDs for this surface 
+    double pc[4][2]; 
+    int npc; 
+    int nodeIds[2]; 
 };
 struct Solver {
     vector<vector<double>> globalH;
     vector<vector<double>> globalHbc;
-    vector<vector<double>> globalC;  // Globalna macierz C
+    vector<vector<double>> globalC;  
     vector<double> globalP;
-    vector<double> t;  // temperatury w aktualnym kroku czasowym
-    vector<double> t_prev;  // temperatury w poprzednim kroku czasowym
+    vector<double> t;  
+    vector<double> t_prev;  
     int matrixSize;
 
     Solver(int nodesNumber) : matrixSize(nodesNumber) {
@@ -619,14 +658,14 @@ struct Solver {
         return aggregatedH;
     }
     void solveGauss() {
-        vector<vector<double>> A = getAggregatedH(); // Macierz [H] + [Hbc]
-        vector<double> b = globalP; // Wektor {P}
+        vector<vector<double>> A = getAggregatedH(); 
+        vector<double> b = globalP;
 
         int n = matrixSize;
 
-        // Eliminacja współczynników
+        
         for (int i = 0; i < n - 1; i++) {
-            // Wybór elementu głównego
+            
             int maxRow = i;
             double maxVal = abs(A[i][i]);
 
@@ -637,13 +676,13 @@ struct Solver {
                 }
             }
 
-            // Zamiana wierszy jeśli znaleziono lepszy element główny
+            
             if (maxRow != i) {
                 swap(A[i], A[maxRow]);
                 swap(b[i], b[maxRow]);
             }
 
-            // Eliminacja Gaussa
+            
             for (int j = i + 1; j < n; j++) {
                 double factor = A[j][i] / A[i][i];
 
@@ -654,7 +693,7 @@ struct Solver {
             }
         }
 
-        // Rozwiązanie układu równań przez podstawienie wsteczne
+       
         t[n - 1] = b[n - 1] / A[n - 1][n - 1];
 
         for (int i = n - 2; i >= 0; i--) {
@@ -666,7 +705,7 @@ struct Solver {
         }
     }
 
-    // Metoda wyświetlająca wyniki (temperatury)
+    
     void printResults() const {
         cout << "\nWyniki - temperatury w wezlach:" << endl;
         for (int i = 0; i < matrixSize; ++i) {
@@ -674,7 +713,7 @@ struct Solver {
         }
     }
 
-    // Metoda wyświetlająca układ równań
+   
     void printEquationSystem() const {
         vector<vector<double>> H = getAggregatedH();
         cout << "\nUklad rownan [H + Hbc]{t} = {P}:" << endl;
@@ -697,12 +736,10 @@ void aggregateLocalHToGlobalH(vector<vector<double>>& globalH, const vector<vect
         }
     }
 }
-void aggregateGlobalH(Grid* grid, const GlobalData& data, Solver& solver) {
-    ElemUniv elemUniv(9);
+void aggregateGlobalH(Grid* grid, const GlobalData& data, Solver& solver, int numPoints) {
+    ElemUniv elemUniv(numPoints * numPoints);
     elemUniv.computeShapeFunctionDerivatives();
-
-    
-    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(3);
+    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(numPoints);
 
     
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
@@ -729,7 +766,6 @@ void aggregateGlobalH(Grid* grid, const GlobalData& data, Solver& solver) {
 }
 
 
-// Function to calculate shape functions for boundary conditions
 vector<double> calculateShapeFunctions(double ksi) {
     vector<double> N(2);
     N[0] = (1.0 - ksi) / 2.0;
@@ -737,7 +773,6 @@ vector<double> calculateShapeFunctions(double ksi) {
     return N;
 }
 
-// Function to calculate Hbc for a surface
 void calculateSurfaceHbc(double length, vector<vector<double>>& surfaceHbc, int numPoints, double alfa) {
     auto gaussPoints = gaussPoints1D(numPoints);
 
@@ -752,17 +787,14 @@ void calculateSurfaceHbc(double length, vector<vector<double>>& surfaceHbc, int 
     }
 }
 
-// Function to check if nodes form a boundary edge
 bool isBoundaryEdge(const Node& node1, const Node& node2) {
     return node1.BC && node2.BC;
 }
 
-// Function to calculate surface length
 double calculateSurfaceLength(const Node& node1, const Node& node2) {
     return sqrt(pow(node2.x - node1.x, 2) + pow(node2.y - node1.y, 2));
 }
 
-// Function to calculate local P vector for a surface
 void calculateSurfaceP(double length, vector<double>& surfaceP, int numPoints, double alfa, double tot) {
     auto gaussPoints = gaussPoints1D(numPoints);
 
@@ -775,19 +807,16 @@ void calculateSurfaceP(double length, vector<double>& surfaceP, int numPoints, d
     }
 }
 
-// Function to calculate Hbc for an element
 void calculateHbc(Element& element, Grid* grid, const GlobalData& data, int numPoints) {
-    // Initialize Hbc matrix
+    
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
             element.Hbc[i][j] = 0.0;
         }
     }
 
-    // Initialize local P vector
     element.localP = vector<double>(4, 0.0);
 
-    // Define element edges (pairs of local node indices)
     vector<pair<int, int>> edges = { {0,1}, {1,2}, {2,3}, {3,0} };
 
     for (const auto& edge : edges) {
@@ -798,36 +827,29 @@ void calculateHbc(Element& element, Grid* grid, const GlobalData& data, int numP
         Node& node2 = grid->nodes[node2_idx];
 
         if (isBoundaryEdge(node1, node2)) {
-            // Calculate surface length
             double length = calculateSurfaceLength(node1, node2);
 
-            // Calculate surface Hbc
             vector<vector<double>> surfaceHbc(2, vector<double>(2, 0.0));
             calculateSurfaceHbc(length, surfaceHbc, numPoints, data.Alfa);
 
-            // Calculate surface P vector
             vector<double> surfaceP(2, 0.0);
             calculateSurfaceP(length, surfaceP, numPoints, data.Alfa, data.Tot);
 
-            // Aggregate surface Hbc into element Hbc
             element.Hbc[edge.first][edge.first] += surfaceHbc[0][0];
             element.Hbc[edge.first][edge.second] += surfaceHbc[0][1];
             element.Hbc[edge.second][edge.first] += surfaceHbc[1][0];
             element.Hbc[edge.second][edge.second] += surfaceHbc[1][1];
 
-            // Aggregate surface P into element localP
             element.localP[edge.first] += surfaceP[0];
             element.localP[edge.second] += surfaceP[1];
         }
     }
 }
 
-// Function to aggregate local Hbc matrices into global Hbc matrix
 void aggregateHbc(Grid* grid, const GlobalData& data, Solver& solver) {
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
         Element& element = grid->elements[elem];
 
-        // Aggregate Hbc
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
                 int globalI = element.ID[i] - 1;
@@ -838,12 +860,9 @@ void aggregateHbc(Grid* grid, const GlobalData& data, Solver& solver) {
     }
 }
 
-// Function to aggregate local P vectors into global P vector
 void aggregateLocalPToGlobalP(Grid* grid, Solver& solver, const GlobalData& data) {
-    // Clear global P vector
     fill(solver.globalP.begin(), solver.globalP.end(), 0.0);
 
-    // Aggregate local P vectors
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
         Element& element = grid->elements[elem];
 
@@ -864,13 +883,10 @@ vector<vector<double>> calculateLocalC(const vector<Node>& elementNodes,
     const vector<pair<GaussPoint, GaussPoint>>& points) {
     vector<vector<double>> localC(4, vector<double>(4, 0.0));
 
-    // Dla każdego punktu całkowania
     for (int point = 0; point < points.size(); point++) {
-        // Obliczenie jakobianu dla tego punktu
         Jakobian jac;
         jac.computeJacobian(elementNodes, elemUniv.dN_dEta[point], elemUniv.dN_dKsi[point]);
 
-        // Obliczenie funkcji kształtu N dla punktu całkowania
         double ksi = points[point].first.ksi;
         double eta = points[point].second.ksi;
 
@@ -881,7 +897,6 @@ vector<vector<double>> calculateLocalC(const vector<Node>& elementNodes,
             0.25 * (1.0 - ksi) * (1.0 + eta)
         };
 
-        // Obliczenie macierzy C dla punktu całkowania
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
                 localC[i][j] += specificHeat * density * N[i] * N[j] * jac.detJ *
@@ -890,13 +905,7 @@ vector<vector<double>> calculateLocalC(const vector<Node>& elementNodes,
         }
 
     }
-  /*  cout << "macierz c dla elementu:\n";
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            cout << localC[i][j] << " " ;
-        }
-        cout << endl;
-    }*/
+  
     return localC;
 }
 void aggregateLocalCToGlobalC(vector<vector<double>>& globalC,
@@ -910,10 +919,12 @@ void aggregateLocalCToGlobalC(vector<vector<double>>& globalC,
         }
     }
 }
-void calculateGlobalMatrices(Grid* grid, GlobalData& data, Solver& solver) {
-    ElemUniv elemUniv(4);  
+void calculateGlobalCMatrix(Grid* grid, GlobalData& data, Solver& solver, int numPoints) {
+    ElemUniv elemUniv(numPoints * numPoints);
     elemUniv.computeShapeFunctionDerivatives();
-    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(2);
+    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(numPoints);
+
+    cout << "\n=== LOKALNE MACIERZE C DLA ELEMENTÓW ===" << endl;
 
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
         vector<Node> elementNodes;
@@ -925,51 +936,51 @@ void calculateGlobalMatrices(Grid* grid, GlobalData& data, Solver& solver) {
             elementNodes.push_back(grid->nodes[nodeIndex - 1]);
         }
 
-        // Obliczenie lokalnej macierzy C
-        vector<vector<double>> localC = calculateLocalC(elementNodes, elemUniv,
+        grid->elements[elem].C = calculateLocalC(elementNodes, elemUniv,
             data.SpecificHeat, data.Density, points);
 
-        // Agregacja macierzy C
-        aggregateLocalCToGlobalC(solver.globalC, localC, nodeIndices);
+        cout << "\nMacierz C dla elementu " << elem + 1 << ":" << endl;
+        for (const auto& row : grid->elements[elem].C) {
+            for (const auto& val : row) {
+                cout << setw(12) << val << " ";
+            }
+            cout << endl;
+        }
+
+        aggregateLocalCToGlobalC(solver.globalC, grid->elements[elem].C, nodeIndices);
     }
+
+    cout << "\n=== GLOBALNA MACIERZ C ===" << endl;
 }
 void solveTimeDependent(Solver& solver, const GlobalData& data) {
     int timeSteps = data.SimulationTime / data.SimulationStepTime;
     double dt = data.SimulationStepTime;
 
-    // Przygotowanie macierzy układu równań [C]/dt + [H]
     vector<vector<double>> A(solver.matrixSize, vector<double>(solver.matrixSize, 0.0));
     vector<double> b(solver.matrixSize, 0.0);
 
-    // Kopiowanie początkowych temperatur
     solver.t_prev = vector<double>(solver.matrixSize, data.InitialTemp);
 
     for (int step = 1; step <= timeSteps; step++) {
         cout << "\nKrok czasowy " << step << "/" << timeSteps << " (t = " << step * dt << "s)" << endl;
 
-        // Formowanie macierzy układu równań
         for (int i = 0; i < solver.matrixSize; i++) {
             for (int j = 0; j < solver.matrixSize; j++) {
                 A[i][j] = solver.globalC[i][j] / dt + solver.globalH[i][j] + solver.globalHbc[i][j];
             }
 
-            // Formowanie wektora prawej strony
             b[i] = solver.globalP[i];
             for (int j = 0; j < solver.matrixSize; j++) {
                 b[i] += (solver.globalC[i][j] / dt) * solver.t_prev[j];
             }
         }
 
-        // Rozwiązanie układu równań metodą Gaussa
         vector<double> new_t(solver.matrixSize, 0.0);
 
-        // Kopiowanie macierzy A i wektora b dla eliminacji Gaussa
         vector<vector<double>> A_temp = A;
         vector<double> b_temp = b;
 
-        // Eliminacja Gaussa
         for (int i = 0; i < solver.matrixSize - 1; i++) {
-            // Wybór elementu głównego (pivoting)
             int maxRow = i;
             double maxVal = abs(A_temp[i][i]);
             for (int k = i + 1; k < solver.matrixSize; k++) {
@@ -979,7 +990,6 @@ void solveTimeDependent(Solver& solver, const GlobalData& data) {
                 }
             }
 
-            // Zamiana wierszy jeśli znaleziono lepszy element główny
             if (maxRow != i) {
                 swap(A_temp[i], A_temp[maxRow]);
                 swap(b_temp[i], b_temp[maxRow]);
@@ -994,7 +1004,6 @@ void solveTimeDependent(Solver& solver, const GlobalData& data) {
             }
         }
 
-        // Podstawienie wsteczne
         for (int i = solver.matrixSize - 1; i >= 0; i--) {
             double sum = 0.0;
             for (int j = i + 1; j < solver.matrixSize; j++) {
@@ -1003,16 +1012,17 @@ void solveTimeDependent(Solver& solver, const GlobalData& data) {
             new_t[i] = (b_temp[i] - sum) / A_temp[i][i];
         }
 
-        // Aktualizacja temperatur
         solver.t = new_t;
 
-        // Wyświetlenie wyników dla aktualnego kroku czasowego
-        cout << "Temperatury w wezlach:" << endl;
+        float max = 0;
+        float min = 10000;
         for (int i = 0; i < solver.matrixSize; i++) {
-            cout << "Wezel " << i + 1 << ": " << fixed << setprecision(4) << solver.t[i] << " C" << endl;
+            
+            if (solver.t[i] > max) max = solver.t[i];
+            if (solver.t[i] < min) min = solver.t[i];
+           
         }
-
-        // Aktualizacja temperatur dla następnego kroku czasowego
+        cout << fixed << setprecision(10) << "temp min: " << min << " C, temp max: " << max << " C" << endl;
         solver.t_prev = solver.t;
     }
 }
@@ -1057,7 +1067,7 @@ int main()
     nodes1[2].y = 0.025;
     nodes1[3].x = 0.0;
     nodes1[3].y = 0.025;
-    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(2);
+    vector<pair<GaussPoint, GaussPoint>> points = gaussPoints2D(numPoints);
     vector<IntegrationPointResults> results = computeIntegrationPointsResults(
         nodes1, elemUniv, conductivity, points);
     for (int i = 0; i < results.size(); i++) {
@@ -1079,11 +1089,11 @@ int main()
     cout << "\n\n=== OBLICZENIA DLA DANYCH Z PLIKU ===" << endl;
 
     
-    ElemUniv elemUnivGrid(4);
+    ElemUniv elemUnivGrid(numPoints*numPoints);
     elemUnivGrid.computeShapeFunctionDerivatives();
 
     
-    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(2);
+    vector<pair<GaussPoint, GaussPoint>> gaussPoints = gaussPoints2D(numPoints);
 
     
     for (int elem = 0; elem < grid->ElementsNumber; elem++) {
@@ -1115,16 +1125,16 @@ int main()
     }
     Solver solver(globalData.NodesNumber);
     cout << "\n=== AGREGACJA MACIERZY H GLOBALNEJ ===" << endl;
-    aggregateGlobalH(grid, globalData, solver);
+    aggregateGlobalH(grid, globalData, solver, numPoints);
 
     // Wyświetlenie globalnej macierzy H
-    solver.printGlobalH();
+   // solver.printGlobalH();
 
     cout << "\n=== OBLICZENIA HBC DLA ELEMENTÓW ===" << endl;
     for (int i = 0; i < grid->ElementsNumber; i++) {
-        calculateHbc(grid->elements[i], grid, globalData, 2);
+        calculateHbc(grid->elements[i], grid, globalData, numPoints);
 
-        cout << "\nMacierz Hbc dla elementu " << i + 1 << ":" << endl;
+       /* cout << "\nMacierz Hbc dla elementu " << i + 1 << ":" << endl;
         for (int j = 0; j < 4; j++) {
             for (int k = 0; k < 4; k++) {
                 cout << setw(10) << grid->elements[i].Hbc[j][k] << " ";
@@ -1136,23 +1146,23 @@ int main()
         for (int j = 0; j < 4; j++) {
             cout << setw(10) << grid->elements[i].localP[j] << " ";
         }
-        cout << endl;
+        cout << endl;*/
     }
 
     cout << "\n=== AGREGACJA MACIERZY HBC ===" << endl;
     aggregateHbc(grid, globalData, solver);
-    solver.printGlobalHbc();
+  //  solver.printGlobalHbc();
 
     cout << "\n=== SUMA MACIERZY H + HBC ===" << endl;
-    solver.printGlobalHSum();
+   // solver.printGlobalHSum();
 
     cout << "\n=== AGREGACJA WEKTORA P ===" << endl;
     aggregateLocalPToGlobalP(grid, solver, globalData);
-    solver.printGlobalP();
+   // solver.printGlobalP();
 
     cout << "\n=== OBLICZANIE MACIERZY C ===" << endl;
-    calculateGlobalMatrices(grid, globalData, solver);
-    solver.printGlobalC();
+    calculateGlobalCMatrix(grid, globalData, solver, numPoints);
+   // solver.printGlobalC();
 
     cout << "\n=== ROZWIAZANIE UKLADU ROWNAN Z UWZGLEDNIENIEM CZASU ===" << endl;
 
@@ -1165,19 +1175,19 @@ int main()
     // Rozwiązanie układu równań z uwzględnieniem czasu
     solveTimeDependent(solver, globalData);
 
-    //cout << "\n=== ROZWIAZYWANIE UKLADU ROWNAN ===" << endl;
+    cout << "\n=== ROZWIAZYWANIE UKLADU ROWNAN ===" << endl;
 
-    //// Inicjalizacja temperatur początkowych
-    //initializeTemperatures(solver, globalData);
+    // Inicjalizacja temperatur początkowych
+    initializeTemperatures(solver, globalData);
 
-    //// Wyświetlenie układu równań przed rozwiązaniem
-    //solver.printEquationSystem();
+    // Wyświetlenie układu równań przed rozwiązaniem
+    solver.printEquationSystem();
 
-    //// Rozwiązanie układu równań
-    //solver.solveGauss();
+    // Rozwiązanie układu równań
+    solver.solveGauss();
 
-    //// Wyświetlenie wyników
-    //solver.printResults();
+    // Wyświetlenie wyników
+    solver.printResults();
 
     return 0;
 }
